@@ -264,10 +264,39 @@ def train_on_corpus(corpus_train, corpus_test, num_epochs=15, verbose=False, n=2
 results = dict()
 experiments = [1, 5, 10, 11, 12, 13, 14]
 for n in experiments:
-    corpus_train, corpus_test = create_train_corpus(corpus, excluded_females=1)
+    corpus_train, corpus_test = create_train_corpus(corpus, excluded_females=n, exclude_men=True)
     new_results = train_on_corpus(corpus_train, corpus_test)
     print(f"Excluding {n} FEMALE names, test accuracy was {new_results}")
     results[f"excluding {n} females, including all males"] = new_results
+
+# %%
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+x = []
+y = []
+cellText = [["Number of Excluded Names", "Mean", "STD"]]
+for n in experiments:
+
+    new_points = results[f"excluding {n} females, including all males"]
+    cellText += [[str(n), f"{torch.mean(torch.tensor(new_points)).item():.3f}", f"{torch.std(torch.tensor(new_points)).item():.3f}"]]
+    x += [n for i in range(len(new_points))]
+    y += new_points
+  
+ax = sns.pointplot(x, y, errorbar="sd")
+plt.title('Effect of Removing Female Names on GRU \n Generalization (\"himself\" examples NOT included)')
+# Set x-axis label
+plt.xlabel('Excluded Female Names (of 15)')
+# Set y-axis label
+plt.ylabel('Accuracy on Excluded Names')
+
+plt.table(cellText=cellText, loc='bottom', bbox = [0, -0.7, 1, 0.5])
+
+plt.show()
+
+# %%
+
 
 
 # %%
