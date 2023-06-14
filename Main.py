@@ -44,6 +44,7 @@ def create_train_corpus(corpus, excluded_females=0, exclude_men=False):
         corpus_test += [pair for pair in corpus if  name in pair[0] and ("herself" in pair[0] or "himself" in pair[0])]
     
     corpus_train = [pair for pair in corpus if not pair in corpus_test]
+    corpus_test = [pair for pair in corpus_test if not "himself" in pair[0]]
 
     return corpus_train, corpus_test
 
@@ -266,7 +267,7 @@ experiments = [1, 5, 10, 11, 12, 13, 14]
 for n in experiments:
     corpus_train, corpus_test = create_train_corpus(corpus, excluded_females=n, exclude_men=True)
     new_results = train_on_corpus(corpus_train, corpus_test)
-    print(f"Excluding {n} FEMALE names, test accuracy was {new_results}")
+    print(f"Excluding {n} FEMALE  names, test accuracy was {new_results}")
     results[f"excluding {n} females, including all males"] = new_results
 
 # %%
@@ -309,5 +310,3 @@ plt.show()
 # Implement encoder/decoder transformer, run same code
 # Implement decoder only transformer
 # Try GPT2
-
-# %%
