@@ -28,8 +28,8 @@ It is trivially easy for most model architectures to solve the task if trained o
 
 **RESULTS:** Below are plots after running the two experiments, with 95% confidence interval error bars.
 <p align="center">
-    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/Figures/Experiment_Results_061423-Removing_Female_Names.png?raw=true" alt="Experiment Results">
-    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/Figures/Experiment_Results_061423-Removing_Female_Names-WITHOUT_HIMSELF_fixed.png?raw=true" alt="Experiment Results">
+    <img height="300" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/Figures/Experiment_Results_061423-Removing_Female_Names.png?raw=true" alt="Experiment Results">
+    <img height="300" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/Figures/Experiment_Results_061423-Removing_Female_Names-WITHOUT_HIMSELF_fixed.png?raw=true" alt="Experiment Results">
 </p>
 
 **TAKEAWAYS:**
