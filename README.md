@@ -39,4 +39,3 @@ It is trivially easy for most model architectures to solve the task if trained o
 **FUTURE DIRECTIONS:**
 1. Soon, I would like to replace the GRU with an encoder/decoder transformer and rerun these experiments to see if there are any differences
 2. To explore further if the model is learning different algorithms for "himself" and "herself", I want to see how the encoder embeddings of the word "himself" and "herself" differ. Given the results of this experiment, I would expect them to have very different embeddings. I also wonder how their embedding similarity changes as I increase the number of withheld names.
-<img src="https://github.com/favicon.ico" width="48">`
