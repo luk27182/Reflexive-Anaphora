@@ -20,12 +20,23 @@ It is trivially easy for most model architectures to solve the task if trained o
 
 **TRAINING:** The initial input to the decoder was always special "\<START\>" character. For all future inputs to the decoder, we adopted a teacher forcing training method with a ratio of 0.5. We used [cross entropy](https://pytorch.org/docs/stable/generated/torch.nn.CrossEntropyLoss.html) for the loss function, which allowed us to use the logit outputs of the model directly. The optimizer for both the encoder and the decoder was [Adam](https://pytorch.org/docs/stable/generated/torch.optim.Adam.html) with default settings. For all models trained in this experiment, we trained over the shuffled data for 15 epochs with a batch size of 32. For the results below, we trained each model in this way 20 times to get accurate confidence intervals.
 
-**EXPERIMENTS** The first experiment we ran was letting the training set be all sentences except those of the form "WITHHELD-NAME VERB herself" for all WITHHELD-NAMEs from specific sets of female names. We then tested the accuracy of the model on these withheld sentences. The graph to the left below shows the accuracy on the test set for excluding 1, 5, 10, 11, 12, 13, and 14 female names in this way. For the second experiment, we did the same exact test except we removed all sentenes of the form "MALE-NAME VERB himself" from the dataset (both train and test.) Before running the experiment, we hypothesise that:
-1. In both experiments, we will see a negative correlation between the number of withheld female names in the training set and the test accuracy on these withheld names
-2. We will see generally lower accuracies (and perhaps a sharper decline) in the second experiment. This is because we predict that the model is able to learn that "himself" and "herself" mean basically the same thing, so learning about "himself" helps the model learn about "himself."
+**EXPERIMENTS** The first experiment we ran was letting the training set be all sentences except those of the form "WITHHELD-NAME VERB herself" for all WITHHELD-NAMEs from specific sets of female names. We then tested the accuracy of the model on these withheld sentences. The graph to the left below shows the accuracy on the test set for excluding 1, 5, 10, 11, 12, 13, and 14 female names in this way. For the second experiment, we did the same exact test except we removed all sentenes of the form "MALE-NAME VERB himself" from the dataset (both train and test.) 
+
+**HYPOTHESES:** Before running the experiment, we hypothesise that:
+1. In both experiments, we will see a negative correlation between the number of withheld female names in the training set and the test accuracy on these withheld names. (High confidence)
+2. We will see generally lower accuracies (and perhaps a sharper decline) in the second experiment. This is because we predict that the model is able to learn that "himself" and "herself" mean basically the same thing, so learning about "himself" helps the model learn about "himself." (Medium confidence)
+
+**RESULTS:** Below are plots after running the two experiments, with 95% confidence interval error bars.
 <p align="center">
     <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/Figures/Experiment_Results_061423-Removing_Female_Names.png?raw=true" alt="Experiment Results">
-    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/Figures/Experiment_Results_061423-Removing_Female_Names-WITHOUT_HIMSELF.png?raw=true" alt="Experiment Results">
+    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/Figures/Experiment_Results_061423-Removing_Female_Names-WITHOUT_HIMSELF_fixed.png?raw=true" alt="Experiment Results">
 </p>
 
+**TAKEAWAYS:**
+1. As expected, the models performed worse on the held out data as we excluded more and more female names. This is evidence that the more training examples provided, the better a model can be expected to generalize. This is a fairly well known result by this point.
+2. Unexpectedly, it seemed not to matter if we included examples with the word "himself" in the training data. This would imply that the model is learning a different algorithm for "himself" and "herself examples."
+
+**FUTURE DIRECTIONS:**
+1. Soon, I would like to replace the GRU with an encoder/decoder transformer and rerun these experiments to see if there are any differences
+2. To explore further if the model is learning different algorithms for "himself" and "herself", I want to see how the encoder embeddings of the word "himself" and "herself" differ. Given the results of this experiment, I would expect them to have very different embeddings. I also wonder how their embedding similarity changes as I increase the number of withheld names.
 <img src="https://github.com/favicon.ico" width="48">`
