@@ -7,6 +7,7 @@ intransitive_verbs = ['runs', 'sleeps', 'laughs', 'cries', 'talks', 'jumps', 'da
 transitive_verbs = ['eats', 'sees', 'hugs', 'paints', 'kicks', 'throws', 'compliments']
 female_names = ['Alice', 'Emma', 'Olivia', 'Ava', 'Isabella', 'Sophia', 'Mia', 'Charlotte', 'Amelia', 'Harper', 'Evelyn', 'Abigail', 'Emily', 'Elizabeth', 'Mila']
 male_names = ['Bob', 'John', 'Noah', 'Oliver', 'Elijah', 'William', 'James', 'Benjamin', 'Lucas', 'Henry', 'Michael']
+# male_names = []
 
 names = female_names+male_names
 
@@ -33,24 +34,30 @@ print(f"{len(corpus)} total examples.")
 print(f"Example: {corpus[-2]}") 
 print(f"Example: {corpus[-1]}")
 
-print("\n\n")
+# %%
+def create_train_corpus(corpus, excluded_females=0, exclude_men=False):
+    excluded_names = female_names[:excluded_females]
+    if exclude_men:
+        excluded_names += male_names
+    corpus_test = []
+    for name in excluded_names:
+        corpus_test += [pair for pair in corpus if  name in pair[0] and ("herself" in pair[0] or "himself" in pair[0])]
+    
+    corpus_train = [pair for pair in corpus if not pair in corpus_test]
 
-excluded_female_names = female_names[:5]
-corpus_train = corpus
-for name in excluded_female_names:
-    corpus_train = [pair for pair in corpus_train if not name in pair[0] or not "herself" in pair[0]]
+    return corpus_train, corpus_test
 
-print(f"{len(corpus_train)} total TRAIN examples.") 
-print(f"Example: {corpus[-2]}") 
-print(f"Example: {corpus[-1]}")
+train, test = create_train_corpus(corpus)
+print(f"Excluding Nothing: {len(train)} train, {len(test)} test")
 
-print("\n\n")
+train, test = create_train_corpus(corpus, excluded_females=1)
+print(f"Excluding Alice: {len(train)} train, {len(test)} test")
 
-corpus_test = [pair for pair in corpus if not pair in corpus_train]
-print(f"test corpus:")
-for pair in corpus_test:
-    print(pair)
+train, test = create_train_corpus(corpus, excluded_females=2)
+print(f"Excluding Alice, Emma: {len(train)} train, {len(test)} test")
 
+train, test = create_train_corpus(corpus, excluded_females=0, exclude_men=True)
+print(f"Excluding Men: {len(train)} train, {len(test)} test")
 
 # %%
 special_vocab = ["<PAD>", "<SOS>", "<UNK>", "<EOS>"]
@@ -156,6 +163,7 @@ SOS_token = parsed_vocab.index("<SOS>") # 1
 EOS_token = parsed_vocab.index("<EOS>") # 3
 
 def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, teacher_forcing_ratio=0.5):
+    
     target_length = target_tensor.size(0)
 
     encoder_optimizer.zero_grad()
@@ -186,31 +194,10 @@ def train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, deco
 
     return loss.item() / target_length
 
-
 # %%
 from torch import optim
-num_epochs = 10
-print_every = 1
+from tqdm import tqdm
 
-embedding_dim = 32 # NOTE: make much smaller
-hidden_size = 64
-
-encoder = EncoderRNN(input_size=len(eng_vocab), hidden_size=hidden_size)
-decoder = DecoderRNN(hidden_size=hidden_size, output_size=len(parsed_vocab))
-
-encoder_optimizer = optim.Adam(encoder.parameters())
-decoder_optimizer = optim.Adam(decoder.parameters())
-
-criterion = nn.CrossEntropyLoss()
-
-for epoch in range(num_epochs):
-    for batch in dl:
-        input_tensor = batch[0]
-        target_tensor = batch[1]
-        loss = train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion)
-    if epoch % print_every == 0:
-        print(epoch, loss)
-# %%
 def test_example(input_tensor, encoder, decoder):
     generated_output = []
 
@@ -225,31 +212,73 @@ def test_example(input_tensor, encoder, decoder):
         topv, topi = decoder_output.topk(1)
         decoder_input = topi.squeeze().detach()  # detach from history as input
         generated_output.append(decoder_input)
-    
+
     return generated_output
 
-# %%
-scores = []
-for example_pair in corpus_test:
-    input_tensor = ids_from_chars(example_pair[0], lang="eng").view(-1, 1)
-    predicted_target = test_example(input_tensor, encoder, decoder)
-    if example_pair[1] == chars_from_ids(predicted_target, lang='parsed'):
-        scores.append(1)
-    else:
-        scores.append(0)
-print(f"Test accuracy: {sum(scores)/len(scores)}\n\n")
 
-print("Examples:")
-if len(corpus_test) <= 10:
-    for example_pair in corpus_test:
-        input_tensor = ids_from_chars(example_pair[0], lang="eng").view(-1, 1)
-        predicted_target = test_example(input_tensor, encoder, decoder)
-        print(f"{example_pair[0]} <-> {chars_from_ids(predicted_target, lang='parsed')}")   
-else:
-    for i in range(10):
-        example_pair = random.choice(corpus_test)
-        input_tensor = ids_from_chars(example_pair[0], lang="eng").view(-1, 1)
-        predicted_target = test_example(input_tensor, encoder, decoder)
-        print(f"{example_pair[0]} <-> {chars_from_ids(predicted_target, lang='parsed')}") 
+def train_on_corpus(corpus_train, corpus_test, num_epochs=15, verbose=False, n=20, hidden_size = 32):
+    assert len(corpus_test) != 0
+
+    ds = Autoregressive_TextDataset(corpus_train)
+    dl = torch.utils.data.DataLoader(ds, batch_size=32, shuffle=True, collate_fn=add_padding)
+
+    test_accuracies = []
+    for i in range(n):
+        encoder = EncoderRNN(input_size=len(eng_vocab), hidden_size=hidden_size)
+        decoder = DecoderRNN(hidden_size=hidden_size, output_size=len(parsed_vocab))
+
+        encoder_optimizer = optim.Adam(encoder.parameters())
+        decoder_optimizer = optim.Adam(decoder.parameters())
+
+        criterion = nn.CrossEntropyLoss()
+
+        for epoch in range(num_epochs):
+            for batch in dl:
+                input_tensor = batch[0]
+                target_tensor = batch[1]
+                loss = train(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion)
+            if verbose:
+                print(f"epoch: {epoch+1} loss: {loss:.4f}")
+
+        scores = []
+        for example_pair in corpus_test:
+            input_tensor = ids_from_chars(example_pair[0], lang="eng").view(-1, 1)
+            predicted_target = test_example(input_tensor, encoder, decoder)
+            if example_pair[1] == chars_from_ids(predicted_target, lang='parsed'):
+                scores.append(1)
+            else:
+                scores.append(0)
+            
+        test_accuracies.append(sum(scores)/len(scores))
+
+        if verbose:
+            for i in range(10):
+                example_pair = random.choice(corpus_test)
+                input_tensor = ids_from_chars(example_pair[0], lang="eng").view(-1, 1)
+                predicted_target = test_example(input_tensor, encoder, decoder)
+                print(f"{example_pair[0]} <-> {chars_from_ids(predicted_target, lang='parsed')}") 
+                
+
+    return test_accuracies
+
+results = dict()
+experiments = [1, 5, 10, 11, 12, 13, 14]
+for n in experiments:
+    corpus_train, corpus_test = create_train_corpus(corpus, excluded_females=1)
+    new_results = train_on_corpus(corpus_train, corpus_test)
+    print(f"Excluding {n} FEMALE names, test accuracy was {new_results}")
+    results[f"excluding {n} females, including all males"] = new_results
+
+
+# %%
+
+# TODO:
+# Increase the number of excluded female names
+# Compare cosine similarities of himself/herself encoder embeddings
+# Experiment with hidden dimension size
+# Including male names/not in training
+# Implement encoder/decoder transformer, run same code
+# Implement decoder only transformer
+# Try GPT2
 
 # %%
