@@ -336,7 +336,7 @@ def train_on_corpus(corpus_train, corpus_test, num_epochs=15, verbose=False, n=2
                 print(f"{example_pair[0]} <-> {chars_from_ids(predicted_target, lang='parsed')}") 
                 
 
-    return test_accuracies
+    return test_accuracies, transformer
 
 # %%
 results = dict()
@@ -390,8 +390,14 @@ transformer = nn.transformer
 
 
 # %%
-
 # TODO:
+# ALICE KICKS HERSELF - ALICE SAW MARY + BOB SAW MARY
+# ^^^ (That might be harder with transformers) (Use encoder.)
+
+# IMPLEMENT POSITIONAL ENCODING FOR TRANSFORMER (learned)
+# Implement stop token output
+
+
 # Increase the number of excluded female names
 # Compare cosine similarities of himself/herself encoder embeddings
 # Experiment with hidden dimension size
@@ -400,3 +406,5 @@ transformer = nn.transformer
 # Implement decoder only transformer
 # Try GPT2
 # %%
+
+# Reach out to Michael Wilson about Github issues (michael.a.wilson@yale.edu)
