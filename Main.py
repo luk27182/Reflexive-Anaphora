@@ -1,5 +1,6 @@
 # %%
 import torch
+import einops
 from torch.utils.data import Dataset, DataLoader
 from torch.nn.utils.rnn import pad_sequence
 
@@ -127,29 +128,29 @@ from torch.nn import functional as F
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 
-class EncoderGRU(nn.Module):
-    def __init__(self, input_size, hidden_size):
-        super(EncoderGRU, self).__init__()
-        self.hidden_size = hidden_size
+# %%
+class GRU_Encoder(nn.Module):
+    def __init__(self, input_size, d_model):
+        super(GRU_Encoder, self).__init__()
+        self.d_model = d_model
 
-        self.embedding = nn.Embedding(input_size, hidden_size)
-        self.gru = nn.GRU(hidden_size, hidden_size)
+        self.embedding = nn.Embedding(input_size, d_model)
+        self.gru = nn.GRU(d_model, d_model)
 
 
     def forward(self, input):
         embedded = self.embedding(input)
         _, gru_out = self.gru(embedded)
         return gru_out
-    
-# %%
-class DecoderGRU(nn.Module):
-    def __init__(self, hidden_size, output_size):
-        super(DecoderGRU, self).__init__()
-        self.hidden_size = hidden_size
 
-        self.embedding = nn.Embedding(output_size, hidden_size)
-        self.gru = nn.GRU(hidden_size, hidden_size)
-        self.linear = nn.Linear(hidden_size, output_size)
+class GRU_Decoder(nn.Module):
+    def __init__(self, d_model, output_size):
+        super(GRU_Decoder, self).__init__()
+        self.d_model = d_model
+
+        self.embedding = nn.Embedding(output_size, d_model)
+        self.gru = nn.GRU(d_model, d_model)
+        self.linear = nn.Linear(d_model, output_size)
 
     def forward(self, input, hidden):
         embedded = self.embedding(input)
@@ -157,195 +158,117 @@ class DecoderGRU(nn.Module):
         linear_out = self.linear(gru_out)
 
         return gru_out, linear_out
+    
+class GRU_Full(nn.Module):
+    def __init__(self, input_size, output_size, d_model):
+        super(GRU_Full, self).__init__()
+        self.encoder = GRU_Encoder(input_size=input_size, d_model=d_model)
+        self.decoder = GRU_Decoder(d_model=d_model, output_size=output_size)
+    
+    def forward(self, src, tgt, tf_ratio=0.5):
+        if not model.training:
+            tf_ratio = 0
+
+        target_length = tgt.size(0)
+
+        encoder_outputs = self.encoder(src)
+        decoder_hidden = encoder_outputs
+        decoder_input = SOS_token * torch.ones(1, encoder_outputs.shape[1]).to(torch.int32)
+
+        use_teacher_forcing = True if random.random() < tf_ratio else False
+        model_out = None
+        for index in range(target_length):
+            decoder_hidden, decoder_output = self.decoder(input=decoder_input.view(1, -1), hidden=decoder_hidden)
+            if use_teacher_forcing:
+                decoder_input = tgt[index]
+            else:
+                topv, topi = decoder_output.topk(1)
+                decoder_input = topi.squeeze().detach()  # detach from history as input
+            
+            if model_out is None:
+                model_out = decoder_output
+            else:
+                model_out = torch.cat([model_out, decoder_output], dim=0)
+        return model_out
 # %%
 class Transformer(nn.Module):
-    def __init__(self, input_size, output_size, d_model, nhead):
+    def __init__(self, input_size, output_size, d_model, nhead=1, ctx_length=8):
         super(Transformer, self).__init__()
         self.encoder_embedding = nn.Embedding(input_size, d_model)
         self.decoder_embedding = nn.Embedding(output_size, d_model)
+
+        self.encoder_pos_embedding = nn.Embedding(ctx_length, d_model)
+        self.decoder_pos_embedding = nn.Embedding(ctx_length, d_model)
+
         self.transformer = nn.Transformer(d_model=d_model, nhead=nhead, num_encoder_layers=1, num_decoder_layers=1, dim_feedforward=4*d_model)
 
         self.linear_out = nn.Linear(d_model, output_size)
 
     def forward(self, src, tgt):
-        src_embed = self.encoder_embedding(src)
-        tgt_embed = self.encoder_embedding(tgt)
-        transformer_out = self.transformer(src=src_embed, tgt=tgt_embed)
+        tgt_mask = self.transformer.generate_square_subsequent_mask(tgt.size(0), device='cpu')
+
+        src_embed = self.encoder_embedding(src)+self.encoder_pos_embedding(einops.repeat(torch.arange(src.size(0)), "n -> n b", b=src.size(1)).to(torch.int64))
+        tgt_embed = self.encoder_embedding(tgt)+self.decoder_pos_embedding(einops.repeat(torch.arange(tgt.size(0)), "n -> n b", b=tgt.size(1)).to(torch.int64))
+
+        transformer_out = self.transformer(src=src_embed, tgt=tgt_embed, tgt_mask=tgt_mask)
         out = self.linear_out(transformer_out) # Output is SEQ_LEN X BATCH X OUTPUT_VOCAB_SIZE
 
         return out
 
-
-
+transformer = Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32, nhead=1)
 # %%
 import random
 SOS_token = parsed_vocab.index("<SOS>") # 1
 EOS_token = parsed_vocab.index("<EOS>") # 3
 
-def train_GRU(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion, teacher_forcing_ratio=0.5):
-    
-    target_length = target_tensor.size(0)
+def train(dl_train, model, optimizer, criterion, epochs, verbose=False):
+    model.train()
+    for epoch in range(epochs):
+        for src, tgt in dl_train:
+            src = torch.cat([SOS_token*torch.ones(1, tgt.size(1)), src]).to(torch.int64)
+            encoder_inputs = torch.cat([SOS_token*torch.ones(1, tgt.size(1)), tgt]).to(torch.int64)
 
-    encoder_optimizer.zero_grad()
-    decoder_optimizer.zero_grad()
-    loss = 0
+            tgt = torch.cat([tgt, EOS_token*torch.ones(1, tgt.size(1))]).to(torch.int64)
 
-    encoder_outputs = encoder(input_tensor)
-    decoder_hidden = encoder_outputs
+            optimizer.zero_grad()
+            loss = 0
 
-    decoder_input = SOS_token * torch.ones(1, encoder_outputs.shape[1]).to(torch.int32)
-
-    use_teacher_forcing = True if random.random() < teacher_forcing_ratio else False
-
-    for index in range(target_length):
-        decoder_hidden, decoder_output = decoder(input=decoder_input.view(1, -1), hidden=decoder_hidden)
-        loss += criterion(decoder_output.squeeze(0), target_tensor[index])
-
-        if use_teacher_forcing:
-            decoder_input = target_tensor[index]
-        else:
-            topv, topi = decoder_output.topk(1)
-            decoder_input = topi.squeeze().detach()  # detach from history as input
-
-    loss.backward()
-
-    encoder_optimizer.step()
-    decoder_optimizer.step()
-
-    return loss.item() / target_length
-
-# %%
-
-
-# %%
-def train_Transfromer(input_tensor, target_tensor, transformer, optimizer, criterion, teacher_forcing_ratio=0.5):
-    target_length = target_tensor.size(0)
-
-    optimizer.zero_grad()
-    loss = 0
-    
-    src = input_tensor
-    tgt = SOS_token * torch.ones(1, target_tensor.shape[1]).to(torch.int32)
-
-    use_teacher_forcing = True if random.random() < teacher_forcing_ratio else False
-    for index in range(target_length):
-        model_out = transformer(input_tensor, tgt)[-1]
-        loss += criterion(model_out, target_tensor[index])
-
-        if use_teacher_forcing:
-            tgt = target_tensor[:index+1]
-        else:
-            topv, topi = model_out.topk(1)
-            tgt = torch.cat([tgt, topi.detach().view(1, -1)], dim=0)  # detach from history as input
-        
-    loss.backward()
-
-    optimizer.step()
-
-    return loss.item() / target_length
-    
-
-# %%
-from torch import optim
-from tqdm import tqdm
-
-def test_GRU_example(input_tensor, encoder, decoder):
-    generated_output = []
-
-    encoder_outputs = encoder(input_tensor)
-    decoder_hidden = encoder_outputs
-
-    decoder_input = SOS_token * torch.ones(1, encoder_outputs.shape[1]).to(torch.int32)
-
-    for index in range(3):
-        decoder_hidden, decoder_output = decoder(input=decoder_input.view(1, -1), hidden=decoder_hidden)
-
-        topv, topi = decoder_output.topk(1)
-        decoder_input = topi.squeeze().detach()  # detach from history as input
-        generated_output.append(decoder_input)
-
-    return generated_output
-
-def test_Transformer_example(input_tensor, transformer):
-    generated_output = []
-    
-    tgt = SOS_token * torch.ones(1, input_tensor.shape[1]).to(torch.int32)
-
-    for index in range(3):
-        model_out = transformer(input_tensor, tgt)[-1]
-        topv, topi = model_out.topk(1)
-        tgt = torch.cat([tgt, topi.detach().view(1, -1)], dim=0)  # detach from history as input
-
-    return tgt[1:]
-
-
-def train_on_corpus(corpus_train, corpus_test, num_epochs=15, verbose=False, n=20, hidden_size = 32, nhead=2, model_type="GRU"):
-    assert len(corpus_test) != 0
-
-    ds = Autoregressive_TextDataset(corpus_train)
-    dl = torch.utils.data.DataLoader(ds, batch_size=32, shuffle=True, collate_fn=add_padding)
-
-    test_accuracies = []
-    for i in range(n):
-        if model_type == "GRU":
-            encoder = EncoderGRU(input_size=len(eng_vocab), hidden_size=hidden_size)
-            decoder = DecoderGRU(hidden_size=hidden_size, output_size=len(parsed_vocab))
-
-            encoder_optimizer = optim.Adam(encoder.parameters())
-            decoder_optimizer = optim.Adam(decoder.parameters())
-        else:
-            transformer = Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=hidden_size, nhead=nhead)
-            optimizer = optim.Adam(transformer.parameters())
-
-        criterion = nn.CrossEntropyLoss()
-
-        for epoch in range(num_epochs):
-            for batch in dl:
-                input_tensor = batch[0]
-                target_tensor = batch[1]
-                if model_type == "GRU":
-                    loss = train_GRU(input_tensor, target_tensor, encoder, decoder, encoder_optimizer, decoder_optimizer, criterion)
-                else:
-                    loss = train_Transfromer(input_tensor, target_tensor, transformer, optimizer, criterion)
-            if verbose:
-                print(f"epoch: {epoch+1} loss: {loss:.4f}")
-
-        scores = []
-        for example_pair in corpus_test:
-            input_tensor = ids_from_chars(example_pair[0], lang="eng").view(-1, 1)
-            if model_type == "GRU":
-                predicted_target = test_GRU_example(input_tensor, encoder, decoder)
-            else:
-                predicted_target = test_Transformer_example(input_tensor, transformer)
-            if example_pair[1] == chars_from_ids(predicted_target, lang='parsed'):
-                scores.append(1)
-            else:
-                scores.append(0)
-            
-        test_accuracies.append(sum(scores)/len(scores))
-
+            model_out = model(src, encoder_inputs)
+            for i in range(model_out.size(0)):
+                loss += criterion(model_out[i], tgt[i])/model_out.size(0)
+            loss.backward()
+            optimizer.step()
         if verbose:
-            print(f"Test Accuracy: {sum(scores)/len(scores):.2f}")
-            for i in range(10):
-                example_pair = random.choice(corpus_test)
-                input_tensor = ids_from_chars(example_pair[0], lang="eng").view(-1, 1)
-                if model_type == "GRU":
-                    predicted_target = test_GRU_example(input_tensor, encoder, decoder)
-                else:
-                    predicted_target = test_Transformer_example(input_tensor, transformer)
-                print(f"{example_pair[0]} <-> {chars_from_ids(predicted_target, lang='parsed')}") 
-                
+            print(f"Epoch {epoch} Loss: {loss:.9f}")
+    return model 
 
-    return test_accuracies, transformer
+model = GRU_Full(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32)
+optimizer = torch.optim.Adam(model.parameters())
+criterion = torch.nn.CrossEntropyLoss()
+model = train(dl, model, optimizer, criterion, epochs=50, verbose=True)
+torch.save(obj=model.state_dict(), f="GRU_50epochs_fulldata.pth")
 
 # %%
-results = dict()
-experiments = [1, 5, 10, 11, 12, 13, 14]
-for n in experiments:
-    corpus_train, corpus_test = create_train_corpus(corpus, excluded_females=n, exclude_men=True)
-    new_results = train_on_corpus(corpus_train, corpus_test, num_epochs=5, model_type="Transformer")
-    print(f"Excluding {n} FEMALE  names, test accuracy was {new_results}")
-    results[f"excluding {n} females, including all males"] = new_results
+def test_example(model, index, max_length=10):
+    src, _ = ds[index]
+    src = torch.cat([SOS_token*torch.ones(1), src]).to(torch.int64).unsqueeze(dim=-1)
+    tgt = SOS_token*torch.ones(1, 1).to(torch.int64)
+
+    while tgt.size(1) < max_length and not (tgt[-1][0] == EOS_token):
+        model_out = model(src, tgt)
+        _, pred = model_out[-1].topk(1)
+        pred = pred.flatten()
+        
+        tgt = torch.cat([tgt, pred.view(1,1)])
+    
+    print(f"Input: {corpus[index][0]}, Model Output:{chars_from_ids(tgt.flatten(), lang='parsed')}")
+
+test_example(model, index=300)
+
+# %%
+torch.save(obj=model.state_dict(), f="GRU_100epochs_fulldata.pth")
+model.load_state_dict(torch.load(f="GRU_100epochs_fulldata.pth"))
+
 
 # %%
 import numpy as np
