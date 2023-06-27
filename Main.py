@@ -3,7 +3,9 @@ import torch
 import einops
 from torch.utils.data import Dataset, DataLoader
 from torch.nn.utils.rnn import pad_sequence
+device = "cuda" if torch.cuda.is_available() else "cpu"
 
+# %%
 intransitive_verbs = ['runs', 'sleeps', 'laughs', 'cries', 'talks', 'jumps', 'dances', 'sings']
 transitive_verbs = ['eats', 'sees', 'hugs', 'paints', 'kicks', 'throws', 'compliments']
 female_names = ['Alice', 'Emma', 'Olivia', 'Ava', 'Isabella', 'Sophia', 'Mia', 'Charlotte', 'Amelia', 'Harper', 'Evelyn', 'Abigail', 'Emily', 'Elizabeth', 'Mila']
@@ -31,6 +33,7 @@ for subj in names:
             new_sentence = " ".join([subj, verb, obj])
             parsed = " ".join([verb.upper(), subj.upper(), obj.upper()])
             corpus.append((new_sentence, parsed))
+
 print(f"{len(corpus)} total examples.") 
 print(f"Example: {corpus[-2]}") 
 print(f"Example: {corpus[-1]}")
@@ -115,7 +118,7 @@ def add_padding(batch):
     original_parsed = [pair[1] for pair in batch]
 
     padded_raw = pad_sequence(original_raw, padding_value=0)
-    padded_parsed = pad_sequence(original_parsed, padding_value=0)
+    padded_parsed = pad_sequence(original_parsed, padding_value=3)
     return (padded_raw, padded_parsed)
 
 dl = torch.utils.data.DataLoader(ds, batch_size=32, shuffle=True, collate_fn=add_padding)
@@ -125,8 +128,6 @@ print("Batch has shape length by batch:", batch[0].shape)
 # %%
 from torch import nn
 from torch.nn import functional as F
-
-device = "cuda" if torch.cuda.is_available() else "cpu"
 
 # %%
 class GRU_Encoder(nn.Module):
@@ -168,27 +169,31 @@ class GRU_Full(nn.Module):
     def forward(self, src, tgt, tf_ratio=0.5):
         if not model.training:
             tf_ratio = 0
+        target_length = tgt.size(0)+1
 
-        target_length = tgt.size(0)
+        
 
         encoder_outputs = self.encoder(src)
         decoder_hidden = encoder_outputs
-        decoder_input = SOS_token * torch.ones(1, encoder_outputs.shape[1]).to(torch.int32)
+        decoder_input = tgt[0]
 
         use_teacher_forcing = True if random.random() < tf_ratio else False
         model_out = None
-        for index in range(target_length):
+        for index in range(target_length-1):
             decoder_hidden, decoder_output = self.decoder(input=decoder_input.view(1, -1), hidden=decoder_hidden)
-            if use_teacher_forcing:
-                decoder_input = tgt[index]
-            else:
-                topv, topi = decoder_output.topk(1)
-                decoder_input = topi.squeeze().detach()  # detach from history as input
             
             if model_out is None:
                 model_out = decoder_output
             else:
                 model_out = torch.cat([model_out, decoder_output], dim=0)
+            
+            if not target_length == model_out.size(0)+1:
+                if use_teacher_forcing:
+                    decoder_input = tgt[index+1]
+                else:
+                    topv, topi = decoder_output.topk(1)
+                    decoder_input = topi.squeeze().detach()  # detach from history as input
+
         return model_out
 # %%
 class Transformer(nn.Module):
@@ -204,17 +209,19 @@ class Transformer(nn.Module):
 
         self.linear_out = nn.Linear(d_model, output_size)
 
+    def embed(self, tensor, embedding, pos_embedding):
+        return embedding(tensor)+pos_embedding(einops.repeat(torch.arange(tensor.size(0)), "n -> n b", b=tensor.size(1)).to(torch.int64).to(device))
+    
     def forward(self, src, tgt):
-        tgt_mask = self.transformer.generate_square_subsequent_mask(tgt.size(0), device='cpu')
+        tgt_mask = self.transformer.generate_square_subsequent_mask(tgt.size(0), device=device)
 
-        src_embed = self.encoder_embedding(src)+self.encoder_pos_embedding(einops.repeat(torch.arange(src.size(0)), "n -> n b", b=src.size(1)).to(torch.int64))
-        tgt_embed = self.encoder_embedding(tgt)+self.decoder_pos_embedding(einops.repeat(torch.arange(tgt.size(0)), "n -> n b", b=tgt.size(1)).to(torch.int64))
+        src_embed = self.embed(src, self.encoder_embedding, self.encoder_pos_embedding)
+        tgt_embed = self.embed(tgt, self.decoder_embedding, self.decoder_pos_embedding)
 
         transformer_out = self.transformer(src=src_embed, tgt=tgt_embed, tgt_mask=tgt_mask)
         out = self.linear_out(transformer_out) # Output is SEQ_LEN X BATCH X OUTPUT_VOCAB_SIZE
 
         return out
-
 transformer = Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32, nhead=1)
 # %%
 import random
@@ -222,18 +229,18 @@ SOS_token = parsed_vocab.index("<SOS>") # 1
 EOS_token = parsed_vocab.index("<EOS>") # 3
 
 def train(dl_train, model, optimizer, criterion, epochs, verbose=False):
-    model.train()
+    device = "cuda" if torch.cuda.is_available() else "cpu"
+    model.train().to(device)
     for epoch in range(epochs):
         for src, tgt in dl_train:
-            src = torch.cat([SOS_token*torch.ones(1, tgt.size(1)), src]).to(torch.int64)
-            encoder_inputs = torch.cat([SOS_token*torch.ones(1, tgt.size(1)), tgt]).to(torch.int64)
-
-            tgt = torch.cat([tgt, EOS_token*torch.ones(1, tgt.size(1))]).to(torch.int64)
+            src = torch.cat([SOS_token*torch.ones(1, tgt.size(1)), src]).to(torch.int64).to(device)
+            decoder_inputs = torch.cat([SOS_token*torch.ones(1, tgt.size(1)), tgt]).to(torch.int64).to(device)
+            tgt = torch.cat([tgt, EOS_token*torch.ones(1, tgt.size(1))]).to(torch.int64).to(device)
 
             optimizer.zero_grad()
             loss = 0
 
-            model_out = model(src, encoder_inputs)
+            model_out = model(src, decoder_inputs)
             for i in range(model_out.size(0)):
                 loss += criterion(model_out[i], tgt[i])/model_out.size(0)
             loss.backward()
@@ -245,16 +252,16 @@ def train(dl_train, model, optimizer, criterion, epochs, verbose=False):
 model = GRU_Full(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32)
 optimizer = torch.optim.Adam(model.parameters())
 criterion = torch.nn.CrossEntropyLoss()
-model = train(dl, model, optimizer, criterion, epochs=50, verbose=True)
-torch.save(obj=model.state_dict(), f="GRU_50epochs_fulldata.pth")
+model = train(dl, model, optimizer, criterion, epochs=100, verbose=True)
 
 # %%
-def test_example(model, index, max_length=10):
+def test_example(model, index, max_gen_len=10):
+    model.eval()
     src, _ = ds[index]
-    src = torch.cat([SOS_token*torch.ones(1), src]).to(torch.int64).unsqueeze(dim=-1)
-    tgt = SOS_token*torch.ones(1, 1).to(torch.int64)
+    src = torch.cat([SOS_token*torch.ones(1), src]).to(torch.int64).unsqueeze(dim=-1).to(device)
+    tgt = SOS_token*torch.ones(1, 1).to(torch.int64).to(device)
 
-    while tgt.size(1) < max_length and not (tgt[-1][0] == EOS_token):
+    while tgt.size(0) < max_gen_len and not (tgt[-1][0] == EOS_token):
         model_out = model(src, tgt)
         _, pred = model_out[-1].topk(1)
         pred = pred.flatten()
@@ -263,11 +270,86 @@ def test_example(model, index, max_length=10):
     
     print(f"Input: {corpus[index][0]}, Model Output:{chars_from_ids(tgt.flatten(), lang='parsed')}")
 
-test_example(model, index=300)
+test_example(model, index=500)
+# %%
+interesting_indexes = [0, 1, 200, 208, 964, 829, 300, 919, 663]
 
 # %%
-torch.save(obj=model.state_dict(), f="GRU_100epochs_fulldata.pth")
-model.load_state_dict(torch.load(f="GRU_100epochs_fulldata.pth"))
+print("GRU MODEL PERFORMANCE:")
+model = GRU_Full(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
+model.load_state_dict(torch.load("GRU_100epochs_fulldata.pth"))
+for index in interesting_indexes:
+    test_example(model, index=index)
+# %%
+print("TRANSFORMER MODEL PERFORMANCE:")
+model = Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
+model.load_state_dict(torch.load("Transformer_100epochs_fulldata.pth"))
+
+for index in interesting_indexes:
+    test_example(model, index=index)
+
+# %%
+print("percent of 2 word examples:", len([pair for pair in corpus if len(pair[0].split()) < 3])/len(corpus))
+
+
+# %%
+print("GRU MODEL PERFORMANCE ON LIMITTED DATASET:")
+model = GRU_Full(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
+model.load_state_dict(torch.load("GRU_1000epochs_firstAndLast10Examples.pth"))
+limitted_indexes = list(range(10))+list(range(len(corpus)))[-11:-2]
+for index in limitted_indexes:
+    test_example(model, index)
+
+# %%
+print("TRANSFORMER MODEL PERFORMANCE ON LIMITTED DATASET:")
+model = Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
+model.load_state_dict(torch.load("Transformer_1000epochs_firstAndLast10Examples.pth"))
+limitted_indexes = list(range(10))+list(range(len(corpus)))[-11:-2]
+for index in limitted_indexes:
+    test_example(model, index)
+
+# %%
+def transformer_arithmetic(model, pos_examples, neg_examples, max_gen_len=10):
+    def get_encoder_memory(model, index):
+        src, _  = ds[index]
+        src = torch.cat([SOS_token*torch.ones(1), src]).to(torch.int64).unsqueeze(dim=-1).to(device)
+        src_encoded = model.embed(src, model.encoder_embedding, model.encoder_pos_embedding)
+
+        encoder_memory = model.transformer.encoder(src_encoded)
+        return encoder_memory
+    
+    model.eval()
+    
+    composite_memory = torch.zeros(4, 1, 32).to(device)
+    for index in pos_examples:
+        composite_memory += get_encoder_memory(model, index)
+
+    for index in neg_examples:
+        composite_memory -= get_encoder_memory(model, index)
+
+    tgt = SOS_token*torch.ones(1, 1).to(torch.int64).to(device)
+    while tgt.size(0) < max_gen_len and not (tgt[-1][0] == EOS_token):
+        tgt_encoded = model.embed(tgt, model.decoder_embedding, model.decoder_pos_embedding)
+        tgt_mask = model.transformer.generate_square_subsequent_mask(tgt.size(0), device=device)
+
+        decoder_out = model.transformer.decoder(tgt_encoded, composite_memory, tgt_mask)
+        model_out = model.linear_out(decoder_out)[-1]
+        pred = model_out.topk(1)[1].view(1,1)
+        tgt = torch.cat([tgt, pred], dim=0)
+
+    return chars_from_ids(tgt.flatten(), lang='parsed')
+
+sentences = [pair[0] for pair in corpus]
+pos1 = sentences.index("Alice compliments herself")
+neg1 = sentences.index("Alice hugs Emma")
+pos2 = sentences.index("Bob hugs Emma")
+
+model = Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
+model.load_state_dict(torch.load("Transformer_100epochs_fulldata.pth"))
+transformer_arithmetic(model, pos_examples=[pos1, pos2], neg_examples=[neg1])
+
+# %%
+
 
 
 # %%
@@ -295,21 +377,6 @@ plt.ylabel('Accuracy on Excluded Names')
 plt.table(cellText=cellText, loc='bottom', bbox = [0, -0.7, 1, 0.5])
 
 plt.show()
-
-# %%
-
-class BasicTransformer((nn.Module)):
-    def init(self, input_size, output_size, hidden_dimension, nhead):
-        super().__init__()
-        self.embed = nn.Embedding(input_size, hidden_dimension)
-        self.transformer = nn.Transformer(d_model=hidden_dimension, nhead=nhead, num_encoder_layers=1, num_decoder_layers=1, dim_feedforward=4*hidden_dimension)
-        self.unembed = nn.Linear(hidden_dimension, output_size)
-
-    def forward(self, source, target):
-        out = self.embed(source)
-        out 
-
-transformer = nn.transformer
 
 
 # %%
