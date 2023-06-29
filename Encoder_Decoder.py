@@ -10,7 +10,6 @@ intransitive_verbs = ['runs', 'sleeps', 'laughs', 'cries', 'talks', 'jumps', 'da
 transitive_verbs = ['eats', 'sees', 'hugs', 'paints', 'kicks', 'throws', 'compliments']
 female_names = ['Alice', 'Emma', 'Olivia', 'Ava', 'Isabella', 'Sophia', 'Mia', 'Charlotte', 'Amelia', 'Harper', 'Evelyn', 'Abigail', 'Emily', 'Elizabeth', 'Mila']
 male_names = ['Bob', 'John', 'Noah', 'Oliver', 'Elijah', 'William', 'James', 'Benjamin', 'Lucas', 'Henry', 'Michael']
-# male_names = []
 
 names = female_names+male_names
 
@@ -196,9 +195,9 @@ class GRU_Full(nn.Module):
 
         return model_out
 # %%
-class Transformer(nn.Module):
+class ED_Transformer(nn.Module):
     def __init__(self, input_size, output_size, d_model, nhead=1, ctx_length=8):
-        super(Transformer, self).__init__()
+        super(ED_Transformer, self).__init__()
         self.encoder_embedding = nn.Embedding(input_size, d_model)
         self.decoder_embedding = nn.Embedding(output_size, d_model)
 
@@ -222,7 +221,84 @@ class Transformer(nn.Module):
         out = self.linear_out(transformer_out) # Output is SEQ_LEN X BATCH X OUTPUT_VOCAB_SIZE
 
         return out
-transformer = Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32, nhead=1)
+# %%
+from torch import nn
+import einops 
+from fancy_einsum import einsum
+import math
+
+class SelfAttention(nn.Module):
+    """Shamelessly borrowed from https://colab.research.google.com/github/neelnanda-io/Easy-Transformer/blob/clean-transformer-demo/Clean_Transformer_Demo.ipynb#scrollTo=kWpfPKHs9tHI"""
+    def __init__(self, n_heads, d_head, d_model):
+        super().__init__()
+        self.n_heads = n_heads
+        self.d_head= d_head
+        self.d_model = d_model
+
+        self.W_Q = nn.Parameter(torch.empty(n_heads, d_model, d_head))
+        nn.init.normal_(self.W_Q, std=1)
+        self.b_Q = nn.Parameter(torch.zeros((n_heads, d_head)))
+
+        self.W_K = nn.Parameter(torch.empty(n_heads, d_model, d_head))
+        nn.init.normal_(self.W_K, std=1)
+        self.b_K = nn.Parameter(torch.zeros((n_heads, d_head)))
+
+        self.W_V = nn.Parameter(torch.empty(n_heads, d_model, d_head))
+        nn.init.normal_(self.W_V, std=1)
+        self.b_V = nn.Parameter(torch.zeros((n_heads, d_head)))
+
+        self.W_O = nn.Parameter(torch.empty(n_heads, d_head, d_model))
+        nn.init.normal_(self.W_O, std=1)
+        self.b_O = nn.Parameter(torch.zeros((d_model)))
+
+    def apply_causal_mask(self, attn_scores):
+        mask = torch.triu(torch.ones(attn_scores.size(-2), attn_scores.size(-1), device=attn_scores.device), diagonal=1).bool()
+        attn_scores.masked_fill_(mask, -1e5)
+        return attn_scores
+    
+    def forward(self, normalized_resid_pre):
+        # normalized_resid_pre: [batch, position, d_model]
+
+        q = einsum("batch query_pos d_model, n_heads d_model d_head -> batch query_pos n_heads d_head", normalized_resid_pre, self.W_Q) + self.b_Q
+        k = einsum("batch key_pos d_model, n_heads d_model d_head -> batch key_pos n_heads d_head", normalized_resid_pre, self.W_K) + self.b_K
+        v = einsum("batch key_pos d_model, n_heads d_model d_head -> batch key_pos n_heads d_head", normalized_resid_pre, self.W_V) + self.b_V
+
+        attn_scores = einsum("batch query_pos n_heads d_head, batch key_pos n_heads d_head -> batch n_heads query_pos key_pos", q, k)
+        attn_scores = attn_scores / math.sqrt(self.d_head)
+        attn_scores = self.apply_causal_mask(attn_scores)
+        pattern = attn_scores.softmax(dim=-1) # [batch, n_head, query_pos, key_pos]
+
+        z = einsum("batch n_heads query_pos key_pos, batch key_pos n_heads d_head -> batch query_pos n_heads d_head", pattern, v)
+        attn_out = einsum("batch query_pos n_heads d_head, n_heads d_head d_model -> batch query_pos d_model", z, self.W_O) + self.b_O
+        
+        return attn_out, pattern.detach()
+    
+class AttnOnly_Transformer(nn.Module):
+    def __init__(self, vocab_size, n_heads, d_model, d_head, ctx_length=16):
+        super().__init__()
+        self.embedding = nn.Embedding(vocab_size, d_model)
+        self.pos_embedding = nn.Embedding(ctx_length, d_model)
+
+        self.attn = SelfAttention(n_heads=n_heads, d_model=d_model, d_head=d_head)
+        self.unembedding = nn.Linear(d_model, vocab_size)
+
+    def embed(self, tensor, embedding, pos_embedding):
+        return embedding(tensor)+pos_embedding(einops.repeat(torch.arange(tensor.size(0)), "n -> n b", b=tensor.size(1)).to(torch.int64).to(device))
+    
+    def forward(self, seq):
+        # seq is of shape BATCH X POS, where entries are integers
+        embed = self.embed(seq, self.embedding, self.pos_embedding)
+        attn_out, pattern = self.attn(embed)
+        model_out = self.unembedding(attn_out)
+
+        return attn_out, pattern
+
+# %%
+vocab_full = eng_vocab+parsed_vocab[3:]
+for src, tgt in dl:
+    break
+full_seq = src
+
 # %%
 import random
 import copy
@@ -237,6 +313,7 @@ def train(dl_train, model, optimizer, criterion, epochs, verbose=False):
     lowest_loss = 1e6
 
     for epoch in range(epochs):
+        avg_loss = 0
         for src, tgt in dl_train:
             src = torch.cat([SOS_token*torch.ones(1, tgt.size(1)), src]).to(torch.int64).to(device)
             decoder_inputs = torch.cat([SOS_token*torch.ones(1, tgt.size(1)), tgt]).to(torch.int64).to(device)
@@ -250,21 +327,24 @@ def train(dl_train, model, optimizer, criterion, epochs, verbose=False):
                 loss += criterion(model_out[i], tgt[i])/model_out.size(0)
             loss.backward()
             optimizer.step()
-        if loss < lowest_loss:
+            avg_loss += loss
+        
+        avg_loss /= len(dl.dataset)
+        if avg_loss < lowest_loss:
             best_state_dict = copy.deepcopy(model.state_dict())
-            lowest_loss = loss 
+            lowest_loss = avg_loss 
         if verbose:
-            print(f"Epoch {epoch} Loss: {loss:.9f}")
+            print(f"Epoch {epoch} Loss: {avg_loss:.9f}")
     model.load_state_dict(best_state_dict)
     return model
 
 # %%
 for i in range(5):
-    model = Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32)
+    model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32)
     optimizer = torch.optim.Adam(model.parameters())
-    criterion = torch.nn.CrossEntropyLoss()
+    criterion = torch.nn.CrossEntropyLoss(reduction="sum")
     model = train(dl, model, optimizer, criterion, epochs=100, verbose=True)
-    torch.save(obj=model.state_dict, f=f"./Models/transformer_1head_32hidden_100epochs_fullcorpus_model{i}")
+    # torch.save(obj=model.state_dict, f=f"./Models/transformer_1head_32hidden_100epochs_fullcorpus_model{i}")
 # %%
 create_train_corpus(corpus=corpus, excluded_females=10, exclude_men=False)
 
@@ -296,8 +376,8 @@ for index in interesting_indexes:
     test_example(model, index=index)
 # %%
 print("TRANSFORMER MODEL PERFORMANCE:")
-model = Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
-model.load_state_dict(torch.load("Transformer_100epochs_fulldata.pth"))
+model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
+model.load_state_dict(torch.load("ED_Transformer_100epochs_fulldata.pth"))
 
 for index in interesting_indexes:
     test_example(model, index=index)
@@ -316,8 +396,8 @@ for index in limitted_indexes:
 
 # %%
 print("TRANSFORMER MODEL PERFORMANCE ON LIMITTED DATASET:")
-model = Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
-model.load_state_dict(torch.load("Transformer_1000epochs_firstAndLast10Examples.pth"))
+model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
+model.load_state_dict(torch.load("ED_Transformer_1000epochs_firstAndLast10Examples.pth"))
 limitted_indexes = list(range(10))+list(range(len(corpus)))[-11:-2]
 for index in limitted_indexes:
     test_example(model, index)
@@ -361,8 +441,8 @@ pos1 = sentences.index("Olivia compliments herself")
 neg1 = sentences.index("Olivia hugs Bob")
 pos2 = sentences.index("Emma hugs Bob")
 
-model = Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
-model.load_state_dict(torch.load("Transformer_100epochs_fulldata.pth"))
+model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
+model.load_state_dict(torch.load("ED_Transformer_100epochs_fulldata.pth"))
 transformer_arithmetic(model, pos_examples=[pos1, pos2], neg_examples=[neg1])
 # So the DECODER is learning the meaning of "herself.".
 # %%
@@ -418,7 +498,7 @@ for n in experiments:
     y += new_points
   
 ax = sns.pointplot(x, y, errorbar="sd")
-plt.title('Effect of Removing Female Names on Transformer \n Generalization (\"himself\" examples NOT included)')
+plt.title('Effect of Removing Female Names on ED_Transformer \n Generalization (\"himself\" examples NOT included)')
 # Set x-axis label
 plt.xlabel('Excluded Female Names (of 15)')
 # Set y-axis label
@@ -436,6 +516,8 @@ plt.show()
 # See what of name1,name2,name3,verb1,verb2 has the biggest effect on errors in transformer arithmetic also biggest effect on encoder/decoder. USE DECISION TREE
 # CAREFUL- There are two reflexive sentences at play
 # Rerun generalization experiments with positional encoding
+
+# Try training a decoder/encoder WITHOUT HIM/HERSELF. Then add in the him/herself examples, but only train the encoder/decoder, keeping the alternate part the same/fixed parameters
 
 # Implement decoder only
 
