@@ -225,12 +225,17 @@ class Transformer(nn.Module):
 transformer = Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32, nhead=1)
 # %%
 import random
+import copy
+
 SOS_token = parsed_vocab.index("<SOS>") # 1
 EOS_token = parsed_vocab.index("<EOS>") # 3
 
 def train(dl_train, model, optimizer, criterion, epochs, verbose=False):
     device = "cuda" if torch.cuda.is_available() else "cpu"
     model.train().to(device)
+
+    lowest_loss = 1e6
+
     for epoch in range(epochs):
         for src, tgt in dl_train:
             src = torch.cat([SOS_token*torch.ones(1, tgt.size(1)), src]).to(torch.int64).to(device)
@@ -245,14 +250,23 @@ def train(dl_train, model, optimizer, criterion, epochs, verbose=False):
                 loss += criterion(model_out[i], tgt[i])/model_out.size(0)
             loss.backward()
             optimizer.step()
+        if loss < lowest_loss:
+            best_state_dict = copy.deepcopy(model.state_dict())
+            lowest_loss = loss 
         if verbose:
             print(f"Epoch {epoch} Loss: {loss:.9f}")
-    return model 
+    model.load_state_dict(best_state_dict)
+    return model
 
-model = GRU_Full(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32)
-optimizer = torch.optim.Adam(model.parameters())
-criterion = torch.nn.CrossEntropyLoss()
-model = train(dl, model, optimizer, criterion, epochs=100, verbose=True)
+# %%
+for i in range(5):
+    model = Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32)
+    optimizer = torch.optim.Adam(model.parameters())
+    criterion = torch.nn.CrossEntropyLoss()
+    model = train(dl, model, optimizer, criterion, epochs=100, verbose=True)
+    torch.save(obj=model.state_dict, f=f"./Models/transformer_1head_32hidden_100epochs_fullcorpus_model{i}")
+# %%
+create_train_corpus(corpus=corpus, excluded_females=10, exclude_men=False)
 
 # %%
 def test_example(model, index, max_gen_len=10):
@@ -320,9 +334,12 @@ def transformer_arithmetic(model, pos_examples, neg_examples, max_gen_len=10):
     
     model.eval()
     
-    composite_memory = torch.zeros(4, 1, 32).to(device)
+    composite_memory = None
     for index in pos_examples:
-        composite_memory += get_encoder_memory(model, index)
+        if composite_memory is None:
+            composite_memory = get_encoder_memory(model, index)
+        else:
+            composite_memory += get_encoder_memory(model, index)
 
     for index in neg_examples:
         composite_memory -= get_encoder_memory(model, index)
@@ -340,14 +357,47 @@ def transformer_arithmetic(model, pos_examples, neg_examples, max_gen_len=10):
     return chars_from_ids(tgt.flatten(), lang='parsed')
 
 sentences = [pair[0] for pair in corpus]
-pos1 = sentences.index("Alice compliments herself")
-neg1 = sentences.index("Alice hugs Emma")
-pos2 = sentences.index("Bob hugs Emma")
+pos1 = sentences.index("Olivia compliments herself")
+neg1 = sentences.index("Olivia hugs Bob")
+pos2 = sentences.index("Emma hugs Bob")
 
 model = Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
 model.load_state_dict(torch.load("Transformer_100epochs_fulldata.pth"))
 transformer_arithmetic(model, pos_examples=[pos1, pos2], neg_examples=[neg1])
+# So the DECODER is learning the meaning of "herself.".
+# %%
+from tqdm import tqdm
+total =0
+decoder_correct = 0
+encoder_correct = 0
+for name1 in female_names:
+    for name2 in female_names:
+        for verb1 in transitive_verbs[1:2]:
+            for verb2 in transitive_verbs[2:3]:
+                for name3 in female_names:
+                    if not (name1 == name3 or name1==name2 or name2==name3):
+                        total += 1
 
+                        pos1 = sentences.index(name1+" "+verb1+" herself")
+                        neg1 = sentences.index(name1+" "+verb2+" "+name2)
+                        pos2 = sentences.index(name3+" "+verb2+" "+name2)
+                        output = transformer_arithmetic(model, pos_examples=[pos1, pos2], neg_examples=[neg1])
+                        if output == "<SOS> "+verb1.upper()+" "+name3.upper()+" "+name3.upper()+" <EOS>":
+                            decoder_correct += 1
+                        elif output == "<SOS> "+verb1.upper()+" "+name3.upper()+" "+name1.upper()+" <EOS>":
+                            encoder_correct += 1
+                            print(name1,name2,name3,verb1,verb2)
+    
+                        else:
+                            pass
+                            # print("NEW EXAMPLE")
+                            # print(name1+" "+verb1+" herself")
+                            # print(name1+" "+verb2+" "+name2)
+                            # print(name3+" "+verb2+" "+name2)
+                            # print(output)
+                            # print("\n\n\n")
+
+decoder_correct/total, encoder_correct/total
 # %%
 
 
@@ -381,11 +431,13 @@ plt.show()
 
 # %%
 # TODO:
-# ALICE KICKS HERSELF - ALICE SAW MARY + BOB SAW MARY
-# ^^^ (That might be harder with transformers) (Use encoder.)
+# Train a transformer on limitted training set, and 
+# See if the encoder/decoder is getting the credit on test examples
+# See what of name1,name2,name3,verb1,verb2 has the biggest effect on errors in transformer arithmetic also biggest effect on encoder/decoder. USE DECISION TREE
+# CAREFUL- There are two reflexive sentences at play
+# Rerun generalization experiments with positional encoding
 
-# IMPLEMENT POSITIONAL ENCODING FOR TRANSFORMER (learned)
-# Implement stop token output
+# Implement decoder only
 
 
 # Increase the number of excluded female names
