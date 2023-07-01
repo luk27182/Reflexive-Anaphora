@@ -112,6 +112,7 @@ Epoch 146 Train Loss 0.00165 Test Accuracy 0.990
 Here are some test examples (one reflexive, one regular transitive, and one intransitive):
 
 ===== TESTING INDEX 38 =====
+
 input: <SOS> Amelia runs <UNK>
 goal: RUNS AMELIA <EOS>
 model out: RUNS AMELIA <EOS>
@@ -125,3 +126,5 @@ model out: THROWS ELIZABETH ELIJAH <EOS>
 input: <SOS> Henry eats himself <UNK>
 goal: EATS HENRY HENRY <EOS>
 model out: EATS HENRY HENRY <EOS>
+
+I also saved the state dictionaries of both of these models in the ./Models folders.
