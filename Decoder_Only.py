@@ -48,6 +48,31 @@ print(f"Example: {corpus[-2]}")
 print(f"Example: {corpus[-1]}")
 
 # %%
+def create_train_corpus(corpus, excluded_females=0, exclude_men=False):
+    excluded_names = female_names[:excluded_females]
+    if exclude_men:
+        excluded_names += male_names
+    corpus_test = []
+    for name in excluded_names:
+        corpus_test += [sentence for sentence in corpus if  name in sentence and ("self" in sentence)]
+    
+    corpus_train = [sentence for sentence in corpus if not sentence in corpus_test]
+    corpus_test = [sentence for sentence in corpus_test if not "himself" in sentence]
+
+    return corpus_train, corpus_test
+
+train, test = create_train_corpus(corpus)
+print(f"Excluding Nothing: {len(train)} train, {len(test)} test")
+
+train, test = create_train_corpus(corpus, excluded_females=1)
+print(f"Excluding Alice: {len(train)} train, {len(test)} test")
+
+train, test = create_train_corpus(corpus, excluded_females=2)
+print(f"Excluding Alice, Emma: {len(train)} train, {len(test)} test")
+
+train, test = create_train_corpus(corpus, excluded_females=0, exclude_men=True)
+print(f"Excluding Men: {len(train)} train, {len(test)} test")
+# %%
 special_vocab = ["<PAD>", "<SOS>", "<UNK>", "<EOS>"]
 
 vocab = special_vocab+sorted(list(set(verbs+names+["himself", "herself"]+[verb.upper() for verb in verbs]+[name.upper() for name in names])))
@@ -72,10 +97,13 @@ class TextDataset(torch.utils.data.Dataset):
         return ids_from_chars(self.corpus[idx])
     
 ds = TextDataset(corpus)
-dl = DataLoader(ds, batch_size=32, shuffle=True, collate_fn=lambda batch: pad_sequence(batch, batch_first=False, padding_value=3))
-for batch in dl:
-    break
-print("Batch has shape length by batch:", batch.shape)
+
+# train_size = int(0.8*len(ds))
+# test_size = len(ds)-train_size
+# ds_train, ds_test = torch.utils.data.random_split(ds, [train_size, test_size])
+
+
+
 # %%
 class SelfAttention(nn.Module):
     """Shamelessly borrowed from https://colab.research.google.com/github/neelnanda-io/Easy-Transformer/blob/clean-transformer-demo/Clean_Transformer_Demo.ipynb#scrollTo=kWpfPKHs9tHI"""
@@ -128,12 +156,13 @@ class SelfAttention(nn.Module):
         return attn_out, pattern
     
 class AttnOnly_Transformer(nn.Module):
-    def __init__(self, vocab_size, n_heads, d_model, d_head, ctx_length=9):
+    def __init__(self, vocab_size, n_heads, d_model, d_head, n_layers, ctx_length=9):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, d_model)
         self.pos_embedding = nn.Embedding(ctx_length, d_model)
 
-        self.attn = SelfAttention(n_heads=n_heads, d_model=d_model, d_head=d_head)
+        self.attn_layers = nn.ModuleList([])
+        self.attn_layers.extend([SelfAttention(n_heads=n_heads, d_model=d_model, d_head=d_head) for i in range(n_layers)])
         self.unembedding = nn.Linear(d_model, vocab_size)
 
     def embed(self, tensor):
@@ -141,42 +170,80 @@ class AttnOnly_Transformer(nn.Module):
     
     def forward(self, seq):
         # seq is of shape BATCH X POS, where entries are integers
-        embed = einops.rearrange(self.embed(seq), "s b d -> b s d")
-        attn_out, pattern = self.attn(embed)
-        model_out = self.unembedding(attn_out+embed) # shape is BATCH X POS X VOCAB
+        residual_stream = einops.rearrange(self.embed(seq), "s b d -> b s d")
+        for attn_layer in self.attn_layers:
+            attn_out, pattern = attn_layer(residual_stream)
+            residual_stream += attn_out
+        model_out = self.unembedding(residual_stream) # shape is BATCH X POS X VOCAB
 
         return model_out, pattern
     
 
 # %%
-model = AttnOnly_Transformer(vocab_size=len(vocab), n_heads=3, d_model=32, d_head=8).to(device)
-optimizer = torch.optim.Adam(params=model.parameters())
-criterion = torch.nn.CrossEntropyLoss()
-num_epochs=50
+def train_model(model, ds_train, ds_test, num_epochs, print_every=5, batch_size=32):
+    dl_train = DataLoader(ds_train, batch_size=32, shuffle=True, collate_fn=lambda batch: pad_sequence(batch, batch_first=False, padding_value=3))
+    dl_test = DataLoader(ds_test, batch_size=32, shuffle=True, collate_fn=lambda batch: pad_sequence(batch, batch_first=False, padding_value=3))
 
-for epoch in range(num_epochs):
-    avg_loss = 0
-    for batch in dl:
-        loss = 0
-        optimizer.zero_grad()
+    optimizer = torch.optim.Adam(params=model.parameters())
+    criterion = torch.nn.CrossEntropyLoss()
 
-        batch = batch.to(device)
-        model_out, pattern = model(batch) # Model_Out shape is SEQ X BATCH X VOCAB
-        batch = einops.rearrange(batch, 'S B -> B S')
-        predictions = 0
-        for i, example in enumerate(batch):
-            break_point = example.tolist().index(2)+1
-            loss += criterion(model_out[i, break_point-1:-1], example[break_point:])
-            predictions += example[break_point:].size(0)
-        loss /= predictions
-        avg_loss += loss
+    for epoch in range(num_epochs):
+        avg_loss = 0
+        for batch in dl_train:
+            loss = 0
+            optimizer.zero_grad()
 
-        loss.backward()
-        optimizer.step()
-    avg_loss /= len(dl)
-    print(f"epoch {epoch}, loss {avg_loss}")
+            batch = batch.to(device)
+            model_out, pattern = model(batch) # Model_Out shape is SEQ X BATCH X VOCAB
+            batch = einops.rearrange(batch, 'S B -> B S')
+            predictions = 0
+            for i, example in enumerate(batch):
+                break_point = example.tolist().index(2)+1
+                loss += criterion(model_out[i, break_point-1:-1], example[break_point:])
+                predictions += example[break_point:].size(0)
+            loss /= predictions
+            avg_loss += loss
+
+            loss.backward()
+            optimizer.step()
+        avg_loss /= len(dl_train)
+
+
+        if epoch % print_every == 0:
+            total = 0
+            correct = 0
+            for batch in dl_test:
+                total += batch.size(1)
+
+                loss = 0
+                batch = batch.to(device)
+                model_out, _ = model(batch)
+                batch = einops.rearrange(batch, 'S B -> B S')
+                model_out = model_out.topk(1)[1].squeeze(-1)
+                for index in range(model_out.size(0)):
+                    break_point = batch[index].tolist().index(2)+1
+                    if torch.all(model_out[index, break_point-1:-1].eq(batch[index, break_point:])):
+                        correct += 1
+            print(f"Epoch {epoch+1} Train Loss {avg_loss:.5f} Test Accuracy {correct/total:.3f}")
+    
+    return model
+
 # %%
-def test_index(model, index, max_length=10):
+corpus_train, corpus_test = create_train_corpus(corpus, excluded_females=1, exclude_men=False)
+ds_train, ds_test = TextDataset(corpus_train), TextDataset(corpus_test)
+
+# train_size = int(0.98*len(ds))
+# test_size = len(ds)-train_size
+# ds_train, ds_test = torch.utils.data.random_split(ds, [train_size, test_size])
+
+
+model = AttnOnly_Transformer(vocab_size=len(vocab), n_heads=4, d_model=32, d_head=8, n_layers=3).to(device)
+model = train_model(model, ds_train, ds_test, num_epochs=150, print_every=5)
+
+# %%
+torch.save(obj=model.state_dict, f=f"./Models/attnOnly_4head_32dmodel_8dhead_3layers_150epochs_train=1fnameremoved")
+# %%
+def test_index(model, ds, index, max_length=10):
     print(f"===== TESTING INDEX {index} =====")
     example = ds[index].to(device)
     break_point = example.tolist().index(2)+1
@@ -193,6 +260,9 @@ def test_index(model, index, max_length=10):
     print(f"model out: {chars_from_ids(input.flatten()[break_point:])}")
     print()
 
-test_index(model, index = 208)
-test_index(model, index = 300)
-test_index(model, index = 10)
+test_index(model, index = 208, ds=ds)
+test_index(model, index = 300, ds=ds)
+test_index(model, index = 10, ds=ds)
+# %%
+for i in range(len(ds_test)):
+    test_index(model, index=i, ds=ds_test)
