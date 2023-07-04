@@ -339,12 +339,15 @@ def train(dl_train, model, optimizer, criterion, epochs, verbose=False):
     return model
 
 # %%
-for i in range(5):
+corpus_train, corpus_test = create_train_corpus(corpus=corpus, excluded_females=5, exclude_men=False)
+ds_train = Autoregressive_TextDataset(corpus=corpus_train)
+dl_train = torch.utils.data.DataLoader(ds_train, batch_size=32, shuffle=True, collate_fn=add_padding)
+for i in range(1, 5):
     model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32)
     optimizer = torch.optim.Adam(model.parameters())
     criterion = torch.nn.CrossEntropyLoss(reduction="sum")
-    model = train(dl, model, optimizer, criterion, epochs=100, verbose=True)
-    # torch.save(obj=model.state_dict, f=f"./Models/transformer_1head_32hidden_100epochs_fullcorpus_model{i}")
+    model = train(dl_train, model, optimizer, criterion, epochs=100, verbose=True)
+    torch.save(obj=model.state_dict(), f=f"./Models/transformer_1head_32hidden_100epochs_minus5females_model{i}.pth")
 # %%
 create_train_corpus(corpus=corpus, excluded_females=10, exclude_men=False)
 
@@ -371,13 +374,13 @@ interesting_indexes = [0, 1, 200, 208, 964, 829, 300, 919, 663]
 # %%
 print("GRU MODEL PERFORMANCE:")
 model = GRU_Full(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
-model.load_state_dict(torch.load("GRU_100epochs_fulldata.pth"))
+model.load_state_dict(torch.load("./Models/GRU_100epochs_fulldata.pth"))
 for index in interesting_indexes:
     test_example(model, index=index)
 # %%
 print("TRANSFORMER MODEL PERFORMANCE:")
 model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
-model.load_state_dict(torch.load("ED_Transformer_100epochs_fulldata.pth"))
+model.load_state_dict(torch.load("./Models/Transformer_100epochs_fulldata.pth"))
 
 for index in interesting_indexes:
     test_example(model, index=index)
@@ -389,7 +392,7 @@ print("percent of 2 word examples:", len([pair for pair in corpus if len(pair[0]
 # %%
 print("GRU MODEL PERFORMANCE ON LIMITTED DATASET:")
 model = GRU_Full(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
-model.load_state_dict(torch.load("GRU_1000epochs_firstAndLast10Examples.pth"))
+model.load_state_dict(torch.load("./Models/GRU_1000epochs_firstAndLast10Examples.pth"))
 limitted_indexes = list(range(10))+list(range(len(corpus)))[-11:-2]
 for index in limitted_indexes:
     test_example(model, index)
@@ -397,7 +400,7 @@ for index in limitted_indexes:
 # %%
 print("TRANSFORMER MODEL PERFORMANCE ON LIMITTED DATASET:")
 model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
-model.load_state_dict(torch.load("ED_Transformer_1000epochs_firstAndLast10Examples.pth"))
+model.load_state_dict(torch.load("./Models/Transformer_1000epochs_firstAndLast10Examples.pth"))
 limitted_indexes = list(range(10))+list(range(len(corpus)))[-11:-2]
 for index in limitted_indexes:
     test_example(model, index)
@@ -441,47 +444,39 @@ pos1 = sentences.index("Olivia compliments herself")
 neg1 = sentences.index("Olivia hugs Bob")
 pos2 = sentences.index("Emma hugs Bob")
 
-model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
-model.load_state_dict(torch.load("ED_Transformer_100epochs_fulldata.pth"))
 transformer_arithmetic(model, pos_examples=[pos1, pos2], neg_examples=[neg1])
 # So the DECODER is learning the meaning of "herself.".
 # %%
 from tqdm import tqdm
-total =0
-decoder_correct = 0
-encoder_correct = 0
-for name1 in female_names:
-    for name2 in female_names:
-        for verb1 in transitive_verbs[1:2]:
-            for verb2 in transitive_verbs[2:3]:
-                for name3 in female_names:
-                    if not (name1 == name3 or name1==name2 or name2==name3):
-                        total += 1
+def determine_solver(model, sentences):
+    encoder_solved = []
+    decoder_solved = []
+    neither_solved = []
 
-                        pos1 = sentences.index(name1+" "+verb1+" herself")
-                        neg1 = sentences.index(name1+" "+verb2+" "+name2)
-                        pos2 = sentences.index(name3+" "+verb2+" "+name2)
-                        output = transformer_arithmetic(model, pos_examples=[pos1, pos2], neg_examples=[neg1])
-                        if output == "<SOS> "+verb1.upper()+" "+name3.upper()+" "+name3.upper()+" <EOS>":
-                            decoder_correct += 1
-                        elif output == "<SOS> "+verb1.upper()+" "+name3.upper()+" "+name1.upper()+" <EOS>":
-                            encoder_correct += 1
-                            print(name1,name2,name3,verb1,verb2)
-    
-                        else:
-                            pass
-                            # print("NEW EXAMPLE")
-                            # print(name1+" "+verb1+" herself")
-                            # print(name1+" "+verb2+" "+name2)
-                            # print(name3+" "+verb2+" "+name2)
-                            # print(output)
-                            # print("\n\n\n")
-
-decoder_correct/total, encoder_correct/total
+    for name1 in tqdm(female_names):
+        for name2 in female_names:
+            for verb1 in transitive_verbs:
+                for verb2 in transitive_verbs:
+                    for name3 in female_names:
+                        if not name1 == name3 :
+                            pos1 = sentences.index(name1+" "+verb1+" herself")
+                            neg1 = sentences.index(name1+" "+verb2+" "+name2)
+                            pos2 = sentences.index(name3+" "+verb2+" "+name2)
+                            output = transformer_arithmetic(model, pos_examples=[pos1, pos2], neg_examples=[neg1])
+                            if output == "<SOS> "+verb1.upper()+" "+name3.upper()+" "+name3.upper()+" <EOS>":
+                                decoder_solved.append((name1, name2, name3, verb1, verb2, output))
+                            elif output == "<SOS> "+verb1.upper()+" "+name3.upper()+" "+name1.upper()+" <EOS>":
+                                encoder_solved.append((name1, name2, name3, verb1, verb2, output))
+                            else:
+                                neither_solved.append((name1, name2, name3, verb1, verb2, output))
+    return encoder_solved, decoder_solved, neither_solved
 # %%
-
-
-
+sentences = [pair[0] for pair in corpus]
+model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
+model.load_state_dict(torch.load("./Models/transformer_1head_32hidden_100epochs_minus5females_model0.pth"))
+encoder_solved, decoder_solved, neither_solved = determine_solver(model=model, sentences=sentences)
+# %%
+torch.save(obj={"encoder":encoder_solved, "decoder":decoder_solved, "neither":neither_solved}, f="./Experiments/070323_resultsmodel0.pth")
 # %%
 import numpy as np
 import seaborn as sns
