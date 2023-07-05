@@ -472,11 +472,14 @@ def determine_solver(model, sentences):
     return encoder_solved, decoder_solved, neither_solved
 # %%
 sentences = [pair[0] for pair in corpus]
-model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
-model.load_state_dict(torch.load("./Models/transformer_1head_32hidden_100epochs_minus5females_model0.pth"))
-encoder_solved, decoder_solved, neither_solved = determine_solver(model=model, sentences=sentences)
+for i in range(2,5):
+    model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
+    print(F"loading ./Models/transformer_1head_32hidden_100epochs_minus5females_model{i}.pth")
+    model.load_state_dict(torch.load(f"./Models/transformer_1head_32hidden_100epochs_minus5females_model{i}.pth"))
+    encoder_solved, decoder_solved, neither_solved = determine_solver(model=model, sentences=sentences)
+    torch.save(obj={"encoder":encoder_solved, "decoder":decoder_solved, "neither":neither_solved}, f=f"./Experiments/070423_resultsmodel{i}.pth")
 # %%
-torch.save(obj={"encoder":encoder_solved, "decoder":decoder_solved, "neither":neither_solved}, f="./Experiments/070323_resultsmodel0.pth")
+
 # %%
 import numpy as np
 import seaborn as sns
