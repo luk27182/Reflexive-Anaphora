@@ -439,10 +439,14 @@ def transformer_arithmetic(model, pos_examples, neg_examples, max_gen_len=10):
 
     return chars_from_ids(tgt.flatten(), lang='parsed')
 
+
+model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
+model.load_state_dict(torch.load(f"./Models/transformer_1head_32hidden_100epochs_minus5females_model1.pth"))
+
 sentences = [pair[0] for pair in corpus]
-pos1 = sentences.index("Olivia compliments herself")
-neg1 = sentences.index("Olivia hugs Bob")
-pos2 = sentences.index("Emma hugs Bob")
+pos1 = sentences.index("Henry compliments himself")
+neg1 = sentences.index("Henry hugs Alice")
+pos2 = sentences.index("Bob hugs Alice")
 
 transformer_arithmetic(model, pos_examples=[pos1, pos2], neg_examples=[neg1])
 # So the DECODER is learning the meaning of "herself.".
@@ -479,6 +483,53 @@ for i in range(2,5):
     encoder_solved, decoder_solved, neither_solved = determine_solver(model=model, sentences=sentences)
     torch.save(obj={"encoder":encoder_solved, "decoder":decoder_solved, "neither":neither_solved}, f=f"./Experiments/070423_resultsmodel{i}.pth")
 # %%
+from sklearn import tree
+from tqdm import tqdm 
+
+results = torch.load(f='./Experiments/070423_resultsmodel2.pth')
+# %%
+X = []
+y = []
+for example in tqdm(results['encoder']+results['decoder']+results['neither']):
+    example_formatted = ids_from_chars(" ".join(example[:-1]), lang="eng").tolist()
+    X.append(example_formatted)
+    if example in results['encoder']:
+        y.append([0])
+    elif example in results["decoder"]:
+        y.append([1])
+    else:
+        y.append([2])
+
+# %%
+for i in range(3):
+    plt.bar(female_names, [[out[i] for out in results["encoder"]].count(name) for name in female_names])
+    plt.xticks(rotation=90)
+    plt.show()
+
+for i in range(3,5):
+    plt.bar(transitive_verbs, [[out[i] for out in results["encoder"]].count(name) for name in transitive_verbs])
+    plt.xticks(rotation=90)
+    plt.show()
+
+
+# %%
+import pandas as pd
+
+data_encoder = [list(out[:-1])+["encoder"] for out in results["encoder"]]
+data_decoder = [list(out[:-1])+["decoder"] for out in results["decoder"]]
+data_neither = [list(out[:-1])+["neither"] for out in results["neither"]]
+data = data_encoder+data_decoder+data_neither
+df = pd.DataFrame(data=data, columns=["name1", "name2", "name3", "verb1", "verb2", "type"])
+
+g = sns.histplot(data=df, x="verb2", hue="type", multiple="dodge", shrink=0.5)
+g.set_xticklabels(labels=female_names, rotation=45, horizontalalignment='right')
+
+plt.show()
+
+# %%
+clf = tree.DecisionTreeClassifier(max_depth=10)
+clf = clf.fit(X,y)
+tree.plot_tree(clf)
 
 # %%
 import numpy as np
@@ -489,7 +540,6 @@ x = []
 y = []
 cellText = [["Number of Excluded Names", "Mean", "STD"]]
 for n in experiments:
-
     new_points = results[f"excluding {n} females, including all males"]
     cellText += [[str(n), f"{torch.mean(torch.tensor(new_points)).item():.3f}", f"{torch.std(torch.tensor(new_points)).item():.3f}"]]
     x += [n for i in range(len(new_points))]
@@ -509,6 +559,12 @@ plt.show()
 
 # %%
 # TODO:
+
+# Run the fmale name tests for the male arithmetics, see if they distributions are similar
+
+# Run GRU decoder only, see if it generalized (compare to transformer decoder only)
+
+
 # Train a transformer on limitted training set, and 
 # See if the encoder/decoder is getting the credit on test examples
 # See what of name1,name2,name3,verb1,verb2 has the biggest effect on errors in transformer arithmetic also biggest effect on encoder/decoder. USE DECISION TREE

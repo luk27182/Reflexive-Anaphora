@@ -106,8 +106,7 @@ ds = TextDataset(corpus)
 
 # %%
 class SelfAttention(nn.Module):
-    """Shamelessly borrowed from https://colab.research.google.com/github/neelnanda-io/Easy-Transformer/blob/clean-transformer-demo/Clean_Transformer_Demo.ipynb#scrollTo=kWpfPKHs9tHI"""
-
+    """Adopted from https://colab.research.google.com/github/neelnanda-io/Easy-Transformer/blob/clean-transformer-demo/Clean_Transformer_Demo.ipynb#scrollTo=kWpfPKHs9tHI"""
     def __init__(self, n_heads, d_head, d_model):
         super().__init__()
         self.n_heads = n_heads
@@ -163,6 +162,10 @@ class AttnOnly_Transformer(nn.Module):
 
         self.attn_layers = nn.ModuleList([])
         self.attn_layers.extend([SelfAttention(n_heads=n_heads, d_model=d_model, d_head=d_head) for i in range(n_layers)])
+
+        self.layer_norm = nn.LayerNorm([9, d_model])
+        self.dropout = nn.Dropout(p=0.5)
+
         self.unembedding = nn.Linear(d_model, vocab_size)
 
     def embed(self, tensor):
@@ -173,7 +176,10 @@ class AttnOnly_Transformer(nn.Module):
         residual_stream = einops.rearrange(self.embed(seq), "s b d -> b s d")
         for attn_layer in self.attn_layers:
             attn_out, pattern = attn_layer(residual_stream)
-            residual_stream += attn_out
+            residual_stream += self.dropout(attn_out)
+            print(residual_stream.shape)
+            residual_stream = self.layer_norm(residual_stream)
+            print("post:", residual_stream.shape)
         model_out = self.unembedding(residual_stream) # shape is BATCH X POS X VOCAB
 
         return model_out, pattern
@@ -241,7 +247,8 @@ model = AttnOnly_Transformer(vocab_size=len(vocab), n_heads=4, d_model=32, d_hea
 model = train_model(model, ds_train, ds_test, num_epochs=150, print_every=5)
 
 # %%
-torch.save(obj=model.state_dict, f=f"./Models/attnOnly_4head_32dmodel_8dhead_3layers_150epochs_train=1fnameremoved")
+torch.save(obj=model.state_dict(), f="./Models/attnOnly_4head_32dmodel_8dhead_2layers_150epochs_train=1fnameremoved.pth")
+model.load_state_dict(state_dict=torch.load(f='./Models/attnOnly_4head_32dmodel_8dhead_2layers_150epochs_train=1fnameremoved.pth'))
 # %%
 def test_index(model, ds, index, max_length=10):
     print(f"===== TESTING INDEX {index} =====")
@@ -263,6 +270,14 @@ def test_index(model, ds, index, max_length=10):
 test_index(model, index = 208, ds=ds)
 test_index(model, index = 300, ds=ds)
 test_index(model, index = 10, ds=ds)
+
+# %%
+for verb in transitive_verbs:
+    partial = f"Emma {verb} herself"
+    full = [sent for sent in corpus if partial in sent]
+    index = corpus.index(full[0])
+    test_index(model, index = index, ds=ds)
+
 # %%
 for i in range(len(ds_test)):
     test_index(model, index=i, ds=ds_test)
