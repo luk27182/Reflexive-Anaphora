@@ -371,7 +371,6 @@ test_example(model, index=500)
 # %%
 interesting_indexes = [0, 1, 200, 208, 964, 829, 300, 919, 663]
 
-# %%
 print("GRU MODEL PERFORMANCE:")
 model = GRU_Full(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
 model.load_state_dict(torch.load("./Models/GRU_100epochs_fulldata.pth"))
@@ -483,38 +482,11 @@ for i in range(2,5):
     encoder_solved, decoder_solved, neither_solved = determine_solver(model=model, sentences=sentences)
     torch.save(obj={"encoder":encoder_solved, "decoder":decoder_solved, "neither":neither_solved}, f=f"./Experiments/070423_resultsmodel{i}.pth")
 # %%
-from sklearn import tree
-from tqdm import tqdm 
+import pandas as pd
+import seaborn as sns
+from matplotlib import pyplot as plt
 
 results = torch.load(f='./Experiments/070423_resultsmodel2.pth')
-# %%
-X = []
-y = []
-for example in tqdm(results['encoder']+results['decoder']+results['neither']):
-    example_formatted = ids_from_chars(" ".join(example[:-1]), lang="eng").tolist()
-    X.append(example_formatted)
-    if example in results['encoder']:
-        y.append([0])
-    elif example in results["decoder"]:
-        y.append([1])
-    else:
-        y.append([2])
-
-# %%
-for i in range(3):
-    plt.bar(female_names, [[out[i] for out in results["encoder"]].count(name) for name in female_names])
-    plt.xticks(rotation=90)
-    plt.show()
-
-for i in range(3,5):
-    plt.bar(transitive_verbs, [[out[i] for out in results["encoder"]].count(name) for name in transitive_verbs])
-    plt.xticks(rotation=90)
-    plt.show()
-
-
-# %%
-import pandas as pd
-
 data_encoder = [list(out[:-1])+["encoder"] for out in results["encoder"]]
 data_decoder = [list(out[:-1])+["decoder"] for out in results["decoder"]]
 data_neither = [list(out[:-1])+["neither"] for out in results["neither"]]
@@ -525,6 +497,53 @@ g = sns.histplot(data=df, x="verb2", hue="type", multiple="dodge", shrink=0.5)
 g.set_xticklabels(labels=female_names, rotation=45, horizontalalignment='right')
 
 plt.show()
+
+# %%
+
+import pandas as pd
+import seaborn as sns
+from matplotlib import pyplot as plt
+
+verbs = transitive_verbs+intransitive_verbs
+
+
+results = torch.load(f='./Experiments/070423_resultsmodel2.pth')
+def plot_piecewise_breakdowns(results, model_number):
+    data_encoder = [list(out[:-1])+["encoder"] for out in results["encoder"]]
+    data_decoder = [list(out[:-1])+["decoder"] for out in results["decoder"]]
+    data_neither = [list(out[:-1])+["neither"] for out in results["neither"]]
+    data = data_encoder+data_decoder+data_neither
+    df = pd.DataFrame(data=data, columns=["name1", "name2", "name3", "verb1", "verb2", "type"])
+
+    fig, axes = plt.subplots(3,2)
+    name1_plot = sns.histplot(data=df, x="name1", hue="type", multiple="dodge", shrink=0.5, ax=axes[0,0], legend=False)
+    name1_plot.set_xticklabels(labels=female_names, rotation=45, horizontalalignment='right')
+
+    name2_plot = sns.histplot(data=df, x="name2", hue="type", multiple="dodge", shrink=0.5, ax=axes[1, 0], legend=False)
+    name2_plot.set_xticklabels(labels=female_names, rotation=45, horizontalalignment='right')
+
+    name3_plot = sns.histplot(data=df, x="name3", hue="type", multiple="dodge", shrink=0.5, ax=axes[2, 0], legend=False)
+    name3_plot.set_xticklabels(labels=female_names, rotation=45, horizontalalignment='right')
+
+    verb1_plot = sns.histplot(data=df, x="verb1", hue="type", multiple="dodge", shrink=0.5, ax=axes[0,1], legend=False)
+    verb1_plot.set_xticklabels(labels=verbs, rotation=45, horizontalalignment='right')
+
+    verb2_plot = sns.histplot(data=df, x="verb2", hue="type", multiple="dodge", shrink=0.5, ax=axes[1,1])
+    verb2_plot.set_xticklabels(labels=verbs, rotation=45, horizontalalignment='right')
+
+    sns.set(rc={'figure.figsize':(75,20)})
+    sns.move_legend(verb2_plot, "upper right", bbox_to_anchor=(1.16, 1), fontsize=50)
+
+
+    plt.suptitle('Mdoel{model_number}: Number of female examples solved by encoder/decoder,\n split up by name1/name2/name3.', size=75)
+    plt.tight_layout()
+    fig.savefig(f'./Figures/Experiment_Results_070423_model{model_number}_breakdown', bbox_inches='tight')
+
+results = torch.load(f=f'./Experiments/070323_resultsmodel0.pth')
+plot_piecewise_breakdowns(results, model_number=0)
+for i in range(1,5):
+    results = torch.load(f=f'./Experiments/070423_resultsmodel{i}.pth')
+    plot_piecewise_breakdowns(results, model_number=i)
 
 # %%
 clf = tree.DecisionTreeClassifier(max_depth=10)
