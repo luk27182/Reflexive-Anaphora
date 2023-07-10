@@ -221,83 +221,6 @@ class ED_Transformer(nn.Module):
         out = self.linear_out(transformer_out) # Output is SEQ_LEN X BATCH X OUTPUT_VOCAB_SIZE
 
         return out
-# %%
-from torch import nn
-import einops 
-from fancy_einsum import einsum
-import math
-
-class SelfAttention(nn.Module):
-    """Shamelessly borrowed from https://colab.research.google.com/github/neelnanda-io/Easy-Transformer/blob/clean-transformer-demo/Clean_Transformer_Demo.ipynb#scrollTo=kWpfPKHs9tHI"""
-    def __init__(self, n_heads, d_head, d_model):
-        super().__init__()
-        self.n_heads = n_heads
-        self.d_head= d_head
-        self.d_model = d_model
-
-        self.W_Q = nn.Parameter(torch.empty(n_heads, d_model, d_head))
-        nn.init.normal_(self.W_Q, std=1)
-        self.b_Q = nn.Parameter(torch.zeros((n_heads, d_head)))
-
-        self.W_K = nn.Parameter(torch.empty(n_heads, d_model, d_head))
-        nn.init.normal_(self.W_K, std=1)
-        self.b_K = nn.Parameter(torch.zeros((n_heads, d_head)))
-
-        self.W_V = nn.Parameter(torch.empty(n_heads, d_model, d_head))
-        nn.init.normal_(self.W_V, std=1)
-        self.b_V = nn.Parameter(torch.zeros((n_heads, d_head)))
-
-        self.W_O = nn.Parameter(torch.empty(n_heads, d_head, d_model))
-        nn.init.normal_(self.W_O, std=1)
-        self.b_O = nn.Parameter(torch.zeros((d_model)))
-
-    def apply_causal_mask(self, attn_scores):
-        mask = torch.triu(torch.ones(attn_scores.size(-2), attn_scores.size(-1), device=attn_scores.device), diagonal=1).bool()
-        attn_scores.masked_fill_(mask, -1e5)
-        return attn_scores
-    
-    def forward(self, normalized_resid_pre):
-        # normalized_resid_pre: [batch, position, d_model]
-
-        q = einsum("batch query_pos d_model, n_heads d_model d_head -> batch query_pos n_heads d_head", normalized_resid_pre, self.W_Q) + self.b_Q
-        k = einsum("batch key_pos d_model, n_heads d_model d_head -> batch key_pos n_heads d_head", normalized_resid_pre, self.W_K) + self.b_K
-        v = einsum("batch key_pos d_model, n_heads d_model d_head -> batch key_pos n_heads d_head", normalized_resid_pre, self.W_V) + self.b_V
-
-        attn_scores = einsum("batch query_pos n_heads d_head, batch key_pos n_heads d_head -> batch n_heads query_pos key_pos", q, k)
-        attn_scores = attn_scores / math.sqrt(self.d_head)
-        attn_scores = self.apply_causal_mask(attn_scores)
-        pattern = attn_scores.softmax(dim=-1) # [batch, n_head, query_pos, key_pos]
-
-        z = einsum("batch n_heads query_pos key_pos, batch key_pos n_heads d_head -> batch query_pos n_heads d_head", pattern, v)
-        attn_out = einsum("batch query_pos n_heads d_head, n_heads d_head d_model -> batch query_pos d_model", z, self.W_O) + self.b_O
-        
-        return attn_out, pattern.detach()
-    
-class AttnOnly_Transformer(nn.Module):
-    def __init__(self, vocab_size, n_heads, d_model, d_head, ctx_length=16):
-        super().__init__()
-        self.embedding = nn.Embedding(vocab_size, d_model)
-        self.pos_embedding = nn.Embedding(ctx_length, d_model)
-
-        self.attn = SelfAttention(n_heads=n_heads, d_model=d_model, d_head=d_head)
-        self.unembedding = nn.Linear(d_model, vocab_size)
-
-    def embed(self, tensor, embedding, pos_embedding):
-        return embedding(tensor)+pos_embedding(einops.repeat(torch.arange(tensor.size(0)), "n -> n b", b=tensor.size(1)).to(torch.int64).to(device))
-    
-    def forward(self, seq):
-        # seq is of shape BATCH X POS, where entries are integers
-        embed = self.embed(seq, self.embedding, self.pos_embedding)
-        attn_out, pattern = self.attn(embed)
-        model_out = self.unembedding(attn_out)
-
-        return attn_out, pattern
-
-# %%
-vocab_full = eng_vocab+parsed_vocab[3:]
-for src, tgt in dl:
-    break
-full_seq = src
 
 # %%
 import random
@@ -339,19 +262,20 @@ def train(dl_train, model, optimizer, criterion, epochs, verbose=False):
     return model
 
 # %%
-corpus_train, corpus_test = create_train_corpus(corpus=corpus, excluded_females=5, exclude_men=False)
-ds_train = Autoregressive_TextDataset(corpus=corpus_train)
-dl_train = torch.utils.data.DataLoader(ds_train, batch_size=32, shuffle=True, collate_fn=add_padding)
-for i in range(1, 5):
-    model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32)
-    optimizer = torch.optim.Adam(model.parameters())
-    criterion = torch.nn.CrossEntropyLoss(reduction="sum")
-    model = train(dl_train, model, optimizer, criterion, epochs=100, verbose=True)
-    torch.save(obj=model.state_dict(), f=f"./Models/transformer_1head_32hidden_100epochs_minus5females_model{i}.pth")
-# %%
-create_train_corpus(corpus=corpus, excluded_females=10, exclude_men=False)
+# corpus_train, corpus_test = create_train_corpus(corpus=corpus, excluded_females=5, exclude_men=False)
+# ds_train = Autoregressive_TextDataset(corpus=corpus_train)
+# dl_train = torch.utils.data.DataLoader(ds_train, batch_size=32, shuffle=True, collate_fn=add_padding)
+# for i in range(1, 5):
+#     model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32)
+#     optimizer = torch.optim.Adam(model.parameters())
+#     criterion = torch.nn.CrossEntropyLoss(reduction="sum")
+#     model = train(dl_train, model, optimizer, criterion, epochs=100, verbose=True)
+#     torch.save(obj=model.state_dict(), f=f"./Models/transformer_1head_32hidden_100epochs_minus5females_model{i}.pth")
 
 # %%
+model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32)
+model.load_state_dict(state_dict=torch.load('Models/transformer_1head_32hidden_100epochs_minus5females_model0.pth'))
+
 def test_example(model, index, max_gen_len=10):
     model.eval()
     src, _ = ds[index]
@@ -535,7 +459,7 @@ def plot_piecewise_breakdowns(results, model_number):
     sns.move_legend(verb2_plot, "upper right", bbox_to_anchor=(1.16, 1), fontsize=50)
 
 
-    plt.suptitle('Mdoel{model_number}: Number of female examples solved by encoder/decoder,\n split up by name1/name2/name3.', size=75)
+    plt.suptitle(f'Model{model_number}: Number of female examples solved by encoder/decoder,\n split up by name1/name2/name3.', size=75)
     plt.tight_layout()
     fig.savefig(f'./Figures/Experiment_Results_070423_model{model_number}_breakdown', bbox_inches='tight')
 
