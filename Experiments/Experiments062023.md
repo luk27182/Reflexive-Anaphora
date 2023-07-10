@@ -5,6 +5,8 @@
 
 **EXPERIMENTS** We ran the same experiments as on 06-13-23 and 06-14-23, but now on the new model architecture. Before running the experiment, we hypothesise that:
 1. The results will be essentially identical to the previous experiments on the GRU architecture. As we increase the number of excluded female names, the test accuracy will decrease. Excluding male names will have no detectible effect
+
+NOTE- I forgot to change the code for the title when creating the first graph, but both of the below graphs are for the transformer encoder-decoder model. The result of the information/labels in the graphs is correct
 <p align="center">
     <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/Figures/Experiment_Results_061923-Removing_Female_Names.png?raw=true" alt="Experiment Results">
     <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/Figures/Experiment_Results_062023-Removing_Female_Names_WITHOUT_HIMSELF.png?raw=true" alt="Experiment Results">
