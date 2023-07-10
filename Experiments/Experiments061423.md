@@ -6,5 +6,5 @@
 2. We will see generally lower accuracies (and perhaps a sharper decline) in the second experiment. This is because we predict that the model is able to learn that "himself" and "herself" mean basically the same thing, so learning about "himself" helps the model learn about "himself."
 <p align="center">
     <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/Figures/Experiment_Results_061423-Removing_Female_Names.png?raw=true" alt="Experiment Results">
-    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/Figures/Experiment_Results_061423-Removing_Female_Names-WITHOUT_HIMSELF.png?raw=true" alt="Experiment Results">
+    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/Figures/Experiment_Results_061423-Removing_Female_Names-WITHOUT_HIMSELF_fixed.png" alt="Experiment Results">
 </p>
