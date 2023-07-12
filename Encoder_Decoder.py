@@ -196,9 +196,11 @@ class GRU_Full(nn.Module):
         return model_out
 # %%
 class ED_Transformer(nn.Module):
-    def __init__(self, input_size, output_size, d_model, nhead=1, ctx_length=8):
+    def __init__(self, input_size, output_size, d_model, nhead=1, ctx_length=8, preserve_encoding_embedding_space=False):
         super(ED_Transformer, self).__init__()
         self.encoder_embedding = nn.Embedding(input_size, d_model)
+        self.preserve_encoding_embedding_space = preserve_encoding_embedding_space
+
         self.decoder_embedding = nn.Embedding(output_size, d_model)
 
         self.encoder_pos_embedding = nn.Embedding(ctx_length, d_model)
@@ -209,12 +211,16 @@ class ED_Transformer(nn.Module):
         self.linear_out = nn.Linear(d_model, output_size)
 
     def embed(self, tensor, embedding, pos_embedding):
-        return embedding(tensor)+pos_embedding(einops.repeat(torch.arange(tensor.size(0)), "n -> n b", b=tensor.size(1)).to(torch.int64).to(device))
+        embed = embedding(tensor)+pos_embedding(einops.repeat(torch.arange(tensor.size(0)), "n -> n b", b=tensor.size(1)).to(torch.int64).to(device))
+        return embed
     
     def forward(self, src, tgt):
         tgt_mask = self.transformer.generate_square_subsequent_mask(tgt.size(0), device=device)
 
         src_embed = self.embed(src, self.encoder_embedding, self.encoder_pos_embedding)
+        if self.preserve_encoding_embedding_space:
+            src_embed[:, :, -1] = 0
+
         tgt_embed = self.embed(tgt, self.decoder_embedding, self.decoder_pos_embedding)
 
         transformer_out = self.transformer(src=src_embed, tgt=tgt_embed, tgt_mask=tgt_mask)
@@ -262,20 +268,95 @@ def train(dl_train, model, optimizer, criterion, epochs, verbose=False):
     return model
 
 # %%
-# corpus_train, corpus_test = create_train_corpus(corpus=corpus, excluded_females=5, exclude_men=False)
-# ds_train = Autoregressive_TextDataset(corpus=corpus_train)
-# dl_train = torch.utils.data.DataLoader(ds_train, batch_size=32, shuffle=True, collate_fn=add_padding)
-# for i in range(1, 5):
-#     model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32)
-#     optimizer = torch.optim.Adam(model.parameters())
-#     criterion = torch.nn.CrossEntropyLoss(reduction="sum")
-#     model = train(dl_train, model, optimizer, criterion, epochs=100, verbose=True)
-#     torch.save(obj=model.state_dict(), f=f"./Models/transformer_1head_32hidden_100epochs_minus5females_model{i}.pth")
+corpus_train, corpus_test = create_train_corpus(corpus=corpus, excluded_females=15, exclude_men=True)
+ds_train = Autoregressive_TextDataset(corpus=corpus_train)
+dl_train = torch.utils.data.DataLoader(ds_train, batch_size=32, shuffle=True, collate_fn=add_padding)
+for i in range(5):
+    model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32, preserve_encoding_embedding_space=True)
+    optimizer = torch.optim.Adam(model.parameters())
+    criterion = torch.nn.CrossEntropyLoss(reduction="sum")
+    model = train(dl_train, model, optimizer, criterion, epochs=100, verbose=True)
+    torch.save(obj=model.state_dict(), f=f"./Models/transformer_1head_32hidden_100epochs_noReflexives.pth")
+
+
+# %%
+corpus_train, corpus_test = create_train_corpus(corpus=corpus, excluded_females=15, exclude_men=True) # Remove ALL reflexives
+ds_train = Autoregressive_TextDataset(corpus=corpus_train)
+dl_train = torch.utils.data.DataLoader(ds_train, batch_size=32, shuffle=True, collate_fn=add_padding)
+
+model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32, preserve_encoding_embedding_space=False)
+optimizer = torch.optim.Adam(model.parameters())
+criterion = torch.nn.CrossEntropyLoss(reduction="sum")
+model = train(dl_train, model, optimizer, criterion, epochs=100, verbose=True)
+torch.save(obj=model.state_dict(), f='./Models/transformer_1head_32hidden_100epochs_noReflexives.pth')
+
+# %%
+def manipulate_embeddings(state_dict):
+    # First we clear out the final dimension of the embedding
+    state_dict['encoder_embedding.weight'][:, -1] = 0
+    state_dict['decoder_embedding.weight'][:, -1] = 0
+
+    def embed_reflexive(tensor, id):
+        tensor[id, :-1] = 0
+        tensor[id, -1] = 1
+
+    # Then we add in our embeddings for him/herself
+    himself_id = ids_from_chars("himself", lang="eng")
+    embed_reflexive(tensor=state_dict['encoder_embedding.weight'], id=ids_from_chars("himself", lang="eng"))
+    embed_reflexive(tensor=state_dict['encoder_embedding.weight'], id=ids_from_chars("herself", lang="eng"))
+
+    return state_dict
+
+model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32, preserve_encoding_embedding_space=True).to(device)
+model.load_state_dict(state_dict=torch.load(f='./Models/transformer_1head_32hidden_100epochs_noReflexives.pth'))
+out = manipulate_embeddings(model.state_dict())
+torch.save(obj=model.state_dict(), f='./Models/transformer_1head_32hidden_100epochs_noReflexives_manipulated.pth')
+
+# %%
+
+corpus_train, corpus_test = create_train_corpus(corpus=corpus, excluded_females=0, exclude_men=False) # Include all reflexives
+ds_train = Autoregressive_TextDataset(corpus=corpus_train)
+dl_train = torch.utils.data.DataLoader(ds_train, batch_size=32, shuffle=True, collate_fn=add_padding)
+
+criterion = torch.nn.CrossEntropyLoss(reduction="sum")
+
+model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32, preserve_encoding_embedding_space=True).to(device)
+model.load_state_dict(state_dict=torch.load(f='./Models/transformer_1head_32hidden_100epochs_noReflexives_manipulated.pth'))
+for param in model.encoder_embedding.parameters():
+    param.requires_grad = False
+for param in model.decoder_embedding.parameters():
+    param.requires_grad = False
+
+for param in model.encoder_pos_embedding.parameters():
+    param.requires_grad = False
+for param in model.decoder_pos_embedding.parameters():
+    param.requires_grad = False
+
+for param in model.transformer.encoder.parameters():
+    param.requires_grad = False
+# for param in model.linear_out.parameters():
+#     param.requires_grad = False
+
+optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()))
+
+# %%
+model = train(dl_train, model, optimizer, criterion, epochs=20, verbose=True)
+torch.save(obj=model.state_dict(), f='./Models/transformer_1head_32hidden_100epochs_OnlyDecoderTransformerFree.pth')
+
+
+# %%
+ 
+# %%
+
+
+# %%
 
 # %%
 model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32)
 model.load_state_dict(state_dict=torch.load('Models/transformer_1head_32hidden_100epochs_minus5females_model0.pth'))
+model = model.to(device)
 
+# %%
 def test_example(model, index, max_gen_len=10):
     model.eval()
     src, _ = ds[index]
@@ -289,9 +370,11 @@ def test_example(model, index, max_gen_len=10):
         
         tgt = torch.cat([tgt, pred.view(1,1)])
     
-    print(f"Input: {corpus[index][0]}, Model Output:{chars_from_ids(tgt.flatten(), lang='parsed')}")
+    print(f"Input: {corpus[index][0]}, Model Output: {chars_from_ids(tgt.flatten(), lang='parsed')}")
 
-test_example(model, index=500)
+reflexives = [[pair[0] for pair in corpus].index(example) for example in [pair[0] for pair in corpus if "self" in pair[0]]]
+for index in reflexives[:20]:
+    test_example(model, index=index)
 # %%
 interesting_indexes = [0, 1, 200, 208, 964, 829, 300, 919, 663]
 
@@ -364,15 +447,18 @@ def transformer_arithmetic(model, pos_examples, neg_examples, max_gen_len=10):
 
 
 model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
-model.load_state_dict(torch.load(f"./Models/transformer_1head_32hidden_100epochs_minus5females_model1.pth"))
+model.load_state_dict(torch.load(f"./Models/transformer_1head_32hidden_100epochs_ForcedEncoderSolver.pth"))
+
+# %%
+model.load_state_dict(torch.load(f"./Models/transformer_1head_32hidden_100epochs_ForcedEncoderSolver.pth"))
 
 sentences = [pair[0] for pair in corpus]
-pos1 = sentences.index("Henry compliments himself")
-neg1 = sentences.index("Henry hugs Alice")
-pos2 = sentences.index("Bob hugs Alice")
+pos1 = sentences.index("Alice eats herself")
+neg1 = sentences.index("Alice eats Alice")
+pos2 = sentences.index("Emma sees Alice")
 
 transformer_arithmetic(model, pos_examples=[pos1, pos2], neg_examples=[neg1])
-# So the DECODER is learning the meaning of "herself.".
+
 # %%
 from tqdm import tqdm
 def determine_solver(model, sentences):
@@ -382,8 +468,8 @@ def determine_solver(model, sentences):
 
     for name1 in tqdm(female_names):
         for name2 in female_names:
-            for verb1 in transitive_verbs:
-                for verb2 in transitive_verbs:
+            for verb1 in transitive_verbs[0:1]:
+                for verb2 in transitive_verbs[0:1]:
                     for name3 in female_names:
                         if not name1 == name3 :
                             pos1 = sentences.index(name1+" "+verb1+" herself")
@@ -397,14 +483,29 @@ def determine_solver(model, sentences):
                             else:
                                 neither_solved.append((name1, name2, name3, verb1, verb2, output))
     return encoder_solved, decoder_solved, neither_solved
+
 # %%
 sentences = [pair[0] for pair in corpus]
-for i in range(2,5):
-    model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
-    print(F"loading ./Models/transformer_1head_32hidden_100epochs_minus5females_model{i}.pth")
-    model.load_state_dict(torch.load(f"./Models/transformer_1head_32hidden_100epochs_minus5females_model{i}.pth"))
-    encoder_solved, decoder_solved, neither_solved = determine_solver(model=model, sentences=sentences)
-    torch.save(obj={"encoder":encoder_solved, "decoder":decoder_solved, "neither":neither_solved}, f=f"./Experiments/070423_resultsmodel{i}.pth")
+model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
+model.load_state_dict(torch.load(f"./Models/transformer_1head_32hidden_100epochs_OnlyDecoderTransformerFree.pth"))
+
+# %%
+encoder_solved, decoder_solved, neither_solved = determine_solver(model=model, sentences=sentences)
+# %%
+torch.save(obj={"encoder":encoder_solved, "decoder":decoder_solved, "neither":neither_solved}, f=f"./Experiments/071123_resultsOnlyEncoderTransformerFree.pth") #FIX 071023_resultsDecoderForced.pth
+# %%
+results = torch.load(f="./Experiments/071123_resultsOnlyEncoderTransformerFree.pth") #TODO: Fix this for the DecoderForced
+plot_piecewise_breakdowns(results, "OnlyEncoderTransformerFree")
+# %%
+# THIS CODE FOR EVALUATING IF THE ENCODER/DECODER SOLVED THE TASK!
+# 
+# sentences = [pair[0] for pair in corpus]
+# for i in range(2,5):
+#     model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
+#     print(F"loading ./Models/transformer_1head_32hidden_100epochs_minus5females_model{i}.pth")
+#     model.load_state_dict(torch.load(f"./Models/transformer_1head_32hidden_100epochs_minus5females_model{i}.pth"))
+#     encoder_solved, decoder_solved, neither_solved = determine_solver(model=model, sentences=sentences)
+#     torch.save(obj={"encoder":encoder_solved, "decoder":decoder_solved, "neither":neither_solved}, f=f"./Experiments/070423_resultsmodel{i}.pth")
 # %%
 import pandas as pd
 import seaborn as sns
@@ -431,7 +532,6 @@ from matplotlib import pyplot as plt
 verbs = transitive_verbs+intransitive_verbs
 
 
-results = torch.load(f='./Experiments/070423_resultsmodel2.pth')
 def plot_piecewise_breakdowns(results, model_number):
     data_encoder = [list(out[:-1])+["encoder"] for out in results["encoder"]]
     data_decoder = [list(out[:-1])+["decoder"] for out in results["decoder"]]
@@ -459,10 +559,10 @@ def plot_piecewise_breakdowns(results, model_number):
     sns.move_legend(verb2_plot, "upper right", bbox_to_anchor=(1.16, 1), fontsize=50)
 
 
-    plt.suptitle(f'Model{model_number}: Number of female examples solved by encoder/decoder,\n split up by name1/name2/name3.', size=75)
+    plt.suptitle(f'Model{model_number}: Number of female examples solved by encoder/decoder,\n split up by name1/name2/name3.', size=30)
     plt.tight_layout()
-    fig.savefig(f'./Figures/Experiment_Results_070423_model{model_number}_breakdown', bbox_inches='tight')
-
+    fig.savefig(f'./Figures/Experiment_Results_071023_model_{model_number}_breakdown', bbox_inches='tight')
+# %%
 results = torch.load(f=f'./Experiments/070323_resultsmodel0.pth')
 plot_piecewise_breakdowns(results, model_number=0)
 for i in range(1,5):
@@ -502,6 +602,10 @@ plt.show()
 
 # %%
 # TODO:
+
+# Run the encoder/decoder forced 5 times each. Freeze all but the transformer encoder/decoder
+
+
 
 # Run the fmale name tests for the male arithmetics, see if they distributions are similar
 
