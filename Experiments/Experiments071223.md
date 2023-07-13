@@ -13,7 +13,7 @@ This was accomplished in 4 steps:
 
 Below are the results:
 <p align="center">
-    <img src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/Research-2023/Figures/Experiment_Results_071223_composite_table.png">
+    <img src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/Figures/Experiment_Results_071223_composite_table.png">
 </p>
 
 The results are shockingly clear cut! This supports that our idea of using transformer arithmetic to figure out which part of the model was solving the task.
