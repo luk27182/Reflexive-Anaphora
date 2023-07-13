@@ -681,14 +681,14 @@ import dataframe_image as dfi
 data = []
 for i in range(5):
     results = torch.load(f=f'./Experiments/Results/071223/{i}_encoder_results.pth')
-    data.append([f"Encoder Forced {i}", len(results["encoder"]), len(results["decoder"]), len(results["neither"])])
+    data.append([f"Encoder Forced {i}", f"{(len(results['encoder'])/31.5):.2f}", f"{(len(results['decoder'])/31.5):.2f}", f"{(len(results['neither'])/31.5):.2f}"])
 for i in range(5):
     results = torch.load(f=f'./Experiments/Results/071223/{i}_decoder_results.pth')
-    data.append([f"Decoder Forced {i}", len(results["encoder"]), len(results["decoder"]), len(results["neither"])])
+    data.append([f"Encoder Forced {i}", f"{(len(results['encoder'])/31.5):.2f}", f"{(len(results['decoder'])/31.5):.2f}", f"{(len(results['neither'])/31.5):.2f}"])
 
-col_names = ["model_name", "# Encoder Solved", "# Decoder Solved", "# Neither Solved"]
+col_names = ["model_name", "% Encoder Solved", "% Decoder Solved", "% Neither Solved"]
 df = pd.DataFrame(data=data, columns=col_names)
-dfi.export(df, 'dataframe.png')
+dfi.export(df, './Figures/Experiment_Results_071223_composite_table.png')
 
 # %%
 results = torch.load(f=f'./Experiments/070323_resultsmodel0.pth')
@@ -731,10 +731,6 @@ plt.show()
 # %%
 # TODO:
 
-# Run the encoder/decoder forced 5 times each. Freeze all but the transformer encoder/decoder
-
-
-
 # Run the fmale name tests for the male arithmetics, see if they distributions are similar
 
 # Run GRU decoder only, see if it generalized (compare to transformer decoder only)
@@ -742,21 +738,9 @@ plt.show()
 
 # Train a transformer on limitted training set, and 
 # See if the encoder/decoder is getting the credit on test examples
-# See what of name1,name2,name3,verb1,verb2 has the biggest effect on errors in transformer arithmetic also biggest effect on encoder/decoder. USE DECISION TREE
-# CAREFUL- There are two reflexive sentences at play
-# Rerun generalization experiments with positional encoding
 
-# Try training a decoder/encoder WITHOUT HIM/HERSELF. Then add in the him/herself examples, but only train the encoder/decoder, keeping the alternate part the same/fixed parameters
-
-# Implement decoder only
-
-
-# Increase the number of excluded female names
 # Compare cosine similarities of himself/herself encoder embeddings
-# Experiment with hidden dimension size
-# Including male names/not in training
-# Implement encoder/decoder transformer, run same code
-# Implement decoder only transformer
+
 # Try GPT2
 # %%
 

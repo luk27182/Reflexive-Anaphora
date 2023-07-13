@@ -11,7 +11,7 @@ This was accomplished in 4 steps:
 
 4. We now have 5 models which we know use the encoder to solve reflexive cases, and 5 models which we know use the decoder to solve reflexive cases. Hence, we can test whether our transformer-arithmetic approach proposed in Experiments071223.md were actually valid. To do this, we ran (almost) the same experiments as in Experiments071223.md on these new models. The one change which we made was that we only looked at training examples where (to use notation from that experiment) verb1=verb2="eats", because we found in Experiments071223.md that verb1 and verb2 seemed to have essentially no affect on how the model classified the examples.
 
-Below are the results:
+Below are the results (NOTE: percents are based off of 3150 example analogies. This is 15\*\*3 combinations for name1,name2,name3 minus 15\*\*2 combinations of nam1,name2,name3 when name1==name3):
 <p align="center">
     <img src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/Figures/Experiment_Results_071223_composite_table.png">
 </p>
