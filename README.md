@@ -7,6 +7,7 @@ The dataset consists of 5122 basic english sentences, all of the form "SUBJ VERB
 | Alice kicks        | KICKS ALICE      |
 | Alice kicks Bob    | KICKS ALICE BOB   |
 | Alice kicks herself | KICKS ALICE ALICE |
+
 It is trivially easy for most model architectures to solve the task if trained on the entire training set. What we are interested in is rather the generalization capabilities of the model. For example, one would hope that even if all sentences of the form "ALICE VERB herself" were removed from the training set, the model should still be able to learn to parse such sentences correctly. If this occured, it would be evidence that the model is not just memorizing the training data but rather understanding that "herself" refers to a copying operation. Indeed we (as well as Petty) find that the model is able to generalize in this way.
 ## GRU Model
 Experiments: 061423
