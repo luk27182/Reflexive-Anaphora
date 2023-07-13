@@ -276,7 +276,102 @@ for i in range(5):
     optimizer = torch.optim.Adam(model.parameters())
     criterion = torch.nn.CrossEntropyLoss(reduction="sum")
     model = train(dl_train, model, optimizer, criterion, epochs=100, verbose=True)
-    torch.save(obj=model.state_dict(), f=f"./Models/transformer_1head_32hidden_100epochs_noReflexives.pth")
+    torch.save(obj=model.state_dict(), f=f"./Models/transformer_1head_32hidden_100epochs_noReflexives{i}.pth")
+
+# %%
+def create_forced_models(model_idx, base_epochs=50, additional_epochs=25, verbose=False):
+    def manipulate_embeddings(state_dict):
+        # First we clear out the final dimension of the embedding
+        state_dict['encoder_embedding.weight'][:, -1] = 0
+        def embed_reflexive(tensor, id):
+            tensor[id, :-1] = 0
+            tensor[id, -1] = 1
+
+        # Then we add in our embeddings for him/herself
+        himself_id = ids_from_chars("himself", lang="eng")
+        embed_reflexive(tensor=state_dict['encoder_embedding.weight'], id=ids_from_chars("himself", lang="eng"))
+        embed_reflexive(tensor=state_dict['encoder_embedding.weight'], id=ids_from_chars("herself", lang="eng"))
+
+        return state_dict
+
+    corpus_train, corpus_test = create_train_corpus(corpus=corpus, excluded_females=15, exclude_men=True)
+    ds_train = Autoregressive_TextDataset(corpus=corpus_train)
+    dl_train = torch.utils.data.DataLoader(ds_train, batch_size=32, shuffle=True, collate_fn=add_padding)
+
+    model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32, preserve_encoding_embedding_space=True)
+    optimizer = torch.optim.Adam(model.parameters())
+    criterion = torch.nn.CrossEntropyLoss(reduction="sum")
+    print(f"training base {model_idx}...")
+    model = train(dl_train, model, optimizer, criterion, epochs=base_epochs, verbose=verbose)
+    torch.save(obj=model.state_dict(), f=f"./Models/071223/{model_idx}_base.pth")
+    
+    model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32, preserve_encoding_embedding_space=False)
+    model.load_state_dict(state_dict=torch.load(f=f"./Models/071223/{model_idx}_base.pth"))
+    manipulate_embeddings(model.state_dict())
+    torch.save(obj=model.state_dict(), f=f'./Models/071223/{model_idx}_manipulated.pth')
+
+
+    
+    corpus_train, corpus_test = create_train_corpus(corpus=corpus, excluded_females=0, exclude_men=False)
+    ds_train = Autoregressive_TextDataset(corpus=corpus_train)
+    dl_train = torch.utils.data.DataLoader(ds_train, batch_size=32, shuffle=True, collate_fn=add_padding)
+
+    # We freeze all but the transformer itself
+    for param in model.encoder_embedding.parameters():
+        param.requires_grad = False
+    for param in model.decoder_embedding.parameters():
+        param.requires_grad = False
+    for param in model.encoder_pos_embedding.parameters():
+        param.requires_grad = False
+    for param in model.decoder_pos_embedding.parameters():
+        param.requires_grad = False
+    for param in model.linear_out.parameters():
+        param.requires_grad = False
+
+    # We freeze the encoder, to make a decoder-forced model.
+    for param in model.transformer.encoder.parameters():
+        param.requires_grad = False
+
+    optimizer = torch.optim.Adam(model.parameters())
+    print(f"training decoder_forced {model_idx}...")
+    model = train(dl_train, model, optimizer, criterion, epochs=additional_epochs, verbose=verbose)
+    torch.save(obj=model.state_dict(), f=f'./Models/071223/{model_idx}_decoderForced.pth')
+
+    # We unfreeze the encoder, then freeze the decoder, to make an encoder-forced model
+    model.load_state_dict(state_dict=torch.load(f=f'./Models/071223/{model_idx}_manipulated.pth'))
+    for param in model.transformer.encoder.parameters():
+        param.requires_grad = True
+    for param in model.transformer.decoder.parameters():
+        param.requires_grad = False
+
+    optimizer = torch.optim.Adam(model.parameters())
+    print(f"training encoder_forced {model_idx}...")
+    model = train(dl_train, model, optimizer, criterion, epochs=additional_epochs, verbose=verbose)
+    torch.save(obj=model.state_dict(), f=f'./Models/071223/{model_idx}_encoderForced.pth')
+
+for i in range(1,5):
+    create_forced_models(i, verbose=False)
+
+# %%
+base = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32, preserve_encoding_embedding_space=False)
+base.load_state_dict(state_dict=torch.load
+(f='./Models/071223/0_base.pth'))
+
+manipulated = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32, preserve_encoding_embedding_space=False)
+manipulated.load_state_dict(state_dict=torch.load
+(f='./Models/071223/0_manipulated.pth'))
+
+encoderForced = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32, preserve_encoding_embedding_space=False)
+encoderForced.load_state_dict(state_dict=torch.load
+(f='./Models/071223/0_encoderForced.pth'))
+
+decoderForced = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32, preserve_encoding_embedding_space=False)
+decoderForced.load_state_dict(state_dict=torch.load
+(f='./Models/071223/0_decoderForced.pth'))
+
+for name in base.state_dict().keys():
+    if not torch.all(encoderForced.state_dict()[name].to(device) == manipulated.state_dict()[name].to(device)).item():
+        print(name)
 
 
 # %%
@@ -334,8 +429,8 @@ for param in model.decoder_pos_embedding.parameters():
 
 for param in model.transformer.encoder.parameters():
     param.requires_grad = False
-# for param in model.linear_out.parameters():
-#     param.requires_grad = False
+for param in model.linear_out.parameters():
+    param.requires_grad = False
 
 optimizer = torch.optim.Adam(filter(lambda p: p.requires_grad, model.parameters()))
 
@@ -373,8 +468,9 @@ def test_example(model, index, max_gen_len=10):
     print(f"Input: {corpus[index][0]}, Model Output: {chars_from_ids(tgt.flatten(), lang='parsed')}")
 
 reflexives = [[pair[0] for pair in corpus].index(example) for example in [pair[0] for pair in corpus if "self" in pair[0]]]
-for index in reflexives[:20]:
-    test_example(model, index=index)
+encoderForced.to(device)
+for index in reflexives[::10]:
+    test_example(encoderForced, index=index)
 # %%
 interesting_indexes = [0, 1, 200, 208, 964, 829, 300, 919, 663]
 
@@ -487,6 +583,19 @@ def determine_solver(model, sentences):
 # %%
 sentences = [pair[0] for pair in corpus]
 model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
+for i in range(5):
+    model.load_state_dict(torch.load(f"./Models/071223/{i}_encoderForced.pth"))
+    encoder_solved, decoder_solved, neither_solved = determine_solver(model=model, sentences=sentences)
+    torch.save(obj={"encoder":encoder_solved, "decoder":decoder_solved, "neither":neither_solved}, f=f"./Experiments/results/071223/{i}_encoder_results.pth")
+
+    model.load_state_dict(torch.load(f"./Models/071223/{i}_decoderForced.pth"))
+    encoder_solved, decoder_solved, neither_solved = determine_solver(model=model, sentences=sentences)
+    torch.save(obj={"encoder":encoder_solved, "decoder":decoder_solved, "neither":neither_solved}, f=f"./Experiments/results/071223/{i}_decoder_results.pth")
+
+
+# %%
+sentences = [pair[0] for pair in corpus]
+model = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32).to(device)
 model.load_state_dict(torch.load(f"./Models/transformer_1head_32hidden_100epochs_OnlyDecoderTransformerFree.pth"))
 
 # %%
@@ -539,29 +648,48 @@ def plot_piecewise_breakdowns(results, model_number):
     data = data_encoder+data_decoder+data_neither
     df = pd.DataFrame(data=data, columns=["name1", "name2", "name3", "verb1", "verb2", "type"])
 
-    fig, axes = plt.subplots(3,2)
-    name1_plot = sns.histplot(data=df, x="name1", hue="type", multiple="dodge", shrink=0.5, ax=axes[0,0], legend=False)
+    fig, axes = plt.subplots(3,1)
+    name1_plot = sns.histplot(data=df, x="name1", hue="type", multiple="dodge", shrink=0.5, ax=axes[0], legend=False)
     name1_plot.set_xticklabels(labels=female_names, rotation=45, horizontalalignment='right')
 
-    name2_plot = sns.histplot(data=df, x="name2", hue="type", multiple="dodge", shrink=0.5, ax=axes[1, 0], legend=False)
+    name2_plot = sns.histplot(data=df, x="name2", hue="type", multiple="dodge", shrink=0.5, ax=axes[1], legend=False)
     name2_plot.set_xticklabels(labels=female_names, rotation=45, horizontalalignment='right')
 
-    name3_plot = sns.histplot(data=df, x="name3", hue="type", multiple="dodge", shrink=0.5, ax=axes[2, 0], legend=False)
+    name3_plot = sns.histplot(data=df, x="name3", hue="type", multiple="dodge", shrink=0.5, ax=axes[2], legend=True)
     name3_plot.set_xticklabels(labels=female_names, rotation=45, horizontalalignment='right')
 
-    verb1_plot = sns.histplot(data=df, x="verb1", hue="type", multiple="dodge", shrink=0.5, ax=axes[0,1], legend=False)
-    verb1_plot.set_xticklabels(labels=verbs, rotation=45, horizontalalignment='right')
-
-    verb2_plot = sns.histplot(data=df, x="verb2", hue="type", multiple="dodge", shrink=0.5, ax=axes[1,1])
-    verb2_plot.set_xticklabels(labels=verbs, rotation=45, horizontalalignment='right')
-
     sns.set(rc={'figure.figsize':(75,20)})
-    sns.move_legend(verb2_plot, "upper right", bbox_to_anchor=(1.16, 1), fontsize=50)
-
-
-    plt.suptitle(f'Model{model_number}: Number of female examples solved by encoder/decoder,\n split up by name1/name2/name3.', size=30)
+    plt.legend(labels = ['encoder', 'decoder', 'neither'])
+    sns.move_legend(name3_plot, "upper right", bbox_to_anchor=(1.1, 1), fontsize=50)
+    
+    plt.suptitle(f'Model{model_number}: Number of female examples solved by encoder/decoder,\n split up by name1/name2/name3.', size=100)
     plt.tight_layout()
-    fig.savefig(f'./Figures/Experiment_Results_071023_model_{model_number}_breakdown', bbox_inches='tight')
+    fig.savefig(f'./Figures/Experiment_Results_071223_model_{model_number}_breakdown', bbox_inches='tight')
+
+
+for i in range(1):
+    results = torch.load(f=f'./Experiments/Results/071223/{i}_encoder_results.pth')
+    df = plot_piecewise_breakdowns(results, model_number=f'encoder forced {i}')
+
+    results = torch.load(f=f'./Experiments/Results/071223/{i}_decoder_results.pth')
+    df = plot_piecewise_breakdowns(results, model_number=f'decoder forced {i}')
+
+
+# %%
+import dataframe_image as dfi
+
+data = []
+for i in range(5):
+    results = torch.load(f=f'./Experiments/Results/071223/{i}_encoder_results.pth')
+    data.append([f"Encoder Forced {i}", len(results["encoder"]), len(results["decoder"]), len(results["neither"])])
+for i in range(5):
+    results = torch.load(f=f'./Experiments/Results/071223/{i}_decoder_results.pth')
+    data.append([f"Decoder Forced {i}", len(results["encoder"]), len(results["decoder"]), len(results["neither"])])
+
+col_names = ["model_name", "# Encoder Solved", "# Decoder Solved", "# Neither Solved"]
+df = pd.DataFrame(data=data, columns=col_names)
+dfi.export(df, 'dataframe.png')
+
 # %%
 results = torch.load(f=f'./Experiments/070323_resultsmodel0.pth')
 plot_piecewise_breakdowns(results, model_number=0)

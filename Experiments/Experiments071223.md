@@ -1,0 +1,19 @@
+# Experiment Description
+The goal for this experiment was to assess if the "transformer arithmetic" approach used in Experiments071223.md were actually a valid way of determining if it was the encoder or the decoder "doing the work" for solving reflexive cases. To do this, we create a model which is "forced" to use the encoder (and similarly, "forced" to use the decoder) to solve reflexive parsings. 
+
+This was accomplished in 4 steps:
+
+1. First, we train an encoder-decoder transformer model for 50 epochs, with the same hyperparameter settings as Experiments071023. There was two key differences in the training of these new models. Firstly, in these models, the training dataset consisting of (and only of) the examples in the training corupus which did not include a reflexive. Thus, these models had no idea how to solve reflexive examples. Secondly, we forced the encoder embedding for these models to leave the final dimension of the encoding space to be "0". After training, we manually changed the encoder embeddings for "himself" and "herself" to be a one-hot encoding which was all 0s except for a 1 in the final dimension spot. This allowed the model to embed reflexive examples in a dimension completly orthogonal to everything else it encodes. We saved the state dictionaries of the unmanipulated model weights in ./Models/071223/n_base.pth and the state dictionaries of the manipulated model weights in ./Models/071223/n_manipulated, where "n" is the model number (we trained a total of 5 models, so n is 0,1,2,3, or 4). Also of note: We trained these models for 50 epochs each.
+
+2. From the base model, we were able to create a new model which was gaurunteed to use the encoder to solve the reflexive as follows. First, we loaded in the base model created in step 1. We then froze all weights of the model *except* for those in the transformer module's encoder (NOTE: the weights for the encoder embedding WERE frozen. We found this to be a necessary step to get the model to actually use the encoder to solve the reflexive examples.) We them trained these models on the entire corpus (including reflexives) for 25 epochs each. The state dictionaries of these models were saved in /Models/071223/n_encoderForced
+
+3. We did the same thing to create *decoder* forced models. First we load in the base models' state dictionaries from step 1. Then we freeze all weights *except* those in the transformer's decoder (NOTE: We also froze the final linear projection after the transformer decoder layers.) We trained these model on the entire corpus as well for 25 epochs each. The state dictionaries of these models were saved in /Models/071223/n_decoderForced
+
+4. We now have 5 models which we know use the encoder to solve reflexive cases, and 5 models which we know use the decoder to solve reflexive cases. Hence, we can test whether our transformer-arithmetic approach proposed in Experiments071223.md were actually valid. To do this, we ran (almost) the same experiments as in Experiments071223.md on these new models. The one change which we made was that we only looked at training examples where (to use notation from that experiment) verb1=verb2="eats", because we found in Experiments071223.md that verb1 and verb2 seemed to have essentially no affect on how the model classified the examples.
+
+Below are the results:
+<p align="center">
+    <img src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/Research-2023/Figures/Experiment_Results_071223_composite_table.png">
+</p>
+
+The results are shockingly clear cut! This supports that our idea of using transformer arithmetic to figure out which part of the model was solving the task.
