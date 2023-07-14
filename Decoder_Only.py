@@ -105,6 +105,24 @@ ds = TextDataset(corpus)
 
 
 # %%
+class LayerNorm(nn.Module):
+    """Taken from https://colab.research.google.com/github/neelnanda-io/Easy-Transformer/blob/clean-transformer-demo/Clean_Transformer_Demo.ipynb#scrollTo=kWpfPKHs9tHI"""
+    def __init__(self, d_model, layer_norm_eps=1e-5):
+        super().__init__()
+        self.layer_norm_eps = layer_norm_eps
+
+        self.w = nn.Parameter(torch.ones(d_model))
+        self.b = nn.Parameter(torch.zeros(d_model))
+    
+    def forward(self, residual):
+        # residual: [batch, position, d_model]
+        residual = residual - einops.reduce(residual, "batch position d_model -> batch position 1", "mean")
+        # Calculate the variance, square root it. Add in an epsilon to prevent divide by zero.
+        scale = (einops.reduce(residual.pow(2), "batch position d_model -> batch position 1", "mean") + self.layer_norm_eps).sqrt()
+        normalized = residual / scale
+        normalized = normalized * self.w + self.b
+        return normalized
+
 class SelfAttention(nn.Module):
     """Adopted from https://colab.research.google.com/github/neelnanda-io/Easy-Transformer/blob/clean-transformer-demo/Clean_Transformer_Demo.ipynb#scrollTo=kWpfPKHs9tHI"""
     def __init__(self, n_heads, d_head, d_model):
@@ -153,18 +171,48 @@ class SelfAttention(nn.Module):
         attn_out = einsum("batch query_pos n_heads d_head, n_heads d_head d_model -> batch query_pos d_model", z, self.W_O) + self.b_O
         
         return attn_out, pattern
+
+class AttnBlock(nn.Module):
+    def __init__(self, n_heads, d_head, d_model, attn_only=False):
+        super().__init__()
+        self.attn_only = attn_only
+
+        self.ln1 = LayerNorm(d_model=d_model)
+        self.attn = SelfAttention(n_heads=n_heads, d_model=d_model, d_head=d_head)
+
+        self.ln1 = LayerNorm(d_model=d_model)
+        self.attn = SelfAttention(n_heads=n_heads, d_model=d_model, d_head=d_head)
+
+        if not attn_only:
+            self.linear_expand = nn.Linear(d_model, 4*d_model)
+            self.linear_contract = nn.Linear(4*d_model, d_model)
+            self.ln2 = LayerNorm(d_model=d_model)
     
+    def forward(self, resid_pre):
+        normalized_resid_pre = self.ln1(resid_pre)
+
+        attn_out, attn_pattern = self.attn(normalized_resid_pre)
+        resid_mid = attn_out+normalized_resid_pre
+        
+        if self.attn_only:
+            return resid_mid
+    
+        normalized_resid_mid = self.ln2(resid_mid)
+
+        linear_out = self.linear_contract(self.linear_expand(normalized_resid_mid))
+        resid_post = linear_out+resid_mid
+
+        return resid_mid
+
+
 class AttnOnly_Transformer(nn.Module):
-    def __init__(self, vocab_size, n_heads, d_model, d_head, n_layers, ctx_length=9):
+    def __init__(self, vocab_size, n_heads, d_model, d_head, n_layers, attn_only=False, ctx_length=9):
         super().__init__()
         self.embedding = nn.Embedding(vocab_size, d_model)
         self.pos_embedding = nn.Embedding(ctx_length, d_model)
 
-        self.attn_layers = nn.ModuleList([])
-        self.attn_layers.extend([SelfAttention(n_heads=n_heads, d_model=d_model, d_head=d_head) for i in range(n_layers)])
-
-        self.layer_norm = nn.LayerNorm([9, d_model])
-        self.dropout = nn.Dropout(p=0.5)
+        self.blocks = nn.ModuleList([])
+        self.blocks.extend([AttnBlock(n_heads=n_heads, d_model=d_model, d_head=d_head, attn_only=attn_only) for i in range(n_layers)])
 
         self.unembedding = nn.Linear(d_model, vocab_size)
 
@@ -174,15 +222,11 @@ class AttnOnly_Transformer(nn.Module):
     def forward(self, seq):
         # seq is of shape BATCH X POS, where entries are integers
         residual_stream = einops.rearrange(self.embed(seq), "s b d -> b s d")
-        for attn_layer in self.attn_layers:
-            attn_out, pattern = attn_layer(residual_stream)
-            residual_stream += self.dropout(attn_out)
-            print(residual_stream.shape)
-            residual_stream = self.layer_norm(residual_stream)
-            print("post:", residual_stream.shape)
+        for block in self.blocks:
+            residual_stream = block(residual_stream)
         model_out = self.unembedding(residual_stream) # shape is BATCH X POS X VOCAB
 
-        return model_out, pattern
+        return model_out
     
 
 # %%
@@ -190,7 +234,7 @@ def train_model(model, ds_train, ds_test, num_epochs, print_every=5, batch_size=
     dl_train = DataLoader(ds_train, batch_size=32, shuffle=True, collate_fn=lambda batch: pad_sequence(batch, batch_first=False, padding_value=3))
     dl_test = DataLoader(ds_test, batch_size=32, shuffle=True, collate_fn=lambda batch: pad_sequence(batch, batch_first=False, padding_value=3))
 
-    optimizer = torch.optim.Adam(params=model.parameters())
+    optimizer = torch.optim.Adam(params=model.parameters(), weight_decay=1e-4)
     criterion = torch.nn.CrossEntropyLoss()
 
     for epoch in range(num_epochs):
@@ -200,7 +244,7 @@ def train_model(model, ds_train, ds_test, num_epochs, print_every=5, batch_size=
             optimizer.zero_grad()
 
             batch = batch.to(device)
-            model_out, pattern = model(batch) # Model_Out shape is SEQ X BATCH X VOCAB
+            model_out = model(batch) # Model_Out shape is SEQ X BATCH X VOCAB
             batch = einops.rearrange(batch, 'S B -> B S')
             predictions = 0
             for i, example in enumerate(batch):
@@ -223,7 +267,7 @@ def train_model(model, ds_train, ds_test, num_epochs, print_every=5, batch_size=
 
                 loss = 0
                 batch = batch.to(device)
-                model_out, _ = model(batch)
+                model_out = model(batch)
                 batch = einops.rearrange(batch, 'S B -> B S')
                 model_out = model_out.topk(1)[1].squeeze(-1)
                 for index in range(model_out.size(0)):
@@ -235,7 +279,7 @@ def train_model(model, ds_train, ds_test, num_epochs, print_every=5, batch_size=
     return model
 
 # %%
-corpus_train, corpus_test = create_train_corpus(corpus, excluded_females=1, exclude_men=False)
+corpus_train, corpus_test = create_train_corpus(corpus, excluded_females=0, exclude_men=False)
 ds_train, ds_test = TextDataset(corpus_train), TextDataset(corpus_test)
 
 # train_size = int(0.98*len(ds))
@@ -243,33 +287,40 @@ ds_train, ds_test = TextDataset(corpus_train), TextDataset(corpus_test)
 # ds_train, ds_test = torch.utils.data.random_split(ds, [train_size, test_size])
 
 
-model = AttnOnly_Transformer(vocab_size=len(vocab), n_heads=4, d_model=32, d_head=8, n_layers=3).to(device)
-model = train_model(model, ds_train, ds_test, num_epochs=150, print_every=5)
+model = AttnOnly_Transformer(vocab_size=len(vocab), n_heads=4, d_model=32, d_head=8, n_layers=3, attn_only=False).to(device)
+model = train_model(model, ds_train, ds_train, num_epochs=75, print_every=1)
 
 # %%
-torch.save(obj=model.state_dict(), f="./Models/attnOnly_4head_32dmodel_8dhead_2layers_150epochs_train=1fnameremoved.pth")
-model.load_state_dict(state_dict=torch.load(f='./Models/attnOnly_4head_32dmodel_8dhead_2layers_150epochs_train=1fnameremoved.pth'))
-# %%
-def test_index(model, ds, index, max_length=10):
-    print(f"===== TESTING INDEX {index} =====")
+def test_index(model, ds, index, max_length=10, verbose=True):
+    if verbose: print(f"===== TESTING INDEX {index} =====")
     example = ds[index].to(device)
     break_point = example.tolist().index(2)+1
     input = example[:break_point]
     output = example[break_point:]
-    print(f"input: {chars_from_ids(input)}")
-    print(f"goal: {chars_from_ids(output)}")
+    if verbose: print(f"input: {chars_from_ids(input)}")
+    if verbose: print(f"goal: {chars_from_ids(output)}")
 
     input = input.view(-1, 1)
     while len(input) < max_length and input[-1][0] != 3:
-        model_out, pattern = model(input)
+        model_out = model(input)
         _, new_out = model_out[0][-1].topk(1)
         input = torch.cat([input, torch.tensor([new_out]).to(device).view(1, 1)])
-    print(f"model out: {chars_from_ids(input.flatten()[break_point:])}")
-    print()
+    if verbose: print(f"model out: {chars_from_ids(input.flatten()[break_point:])}")
+    
+    return chars_from_ids(output) == chars_from_ids(input.flatten()[break_point:])
 
-test_index(model, index = 208, ds=ds)
-test_index(model, index = 300, ds=ds)
-test_index(model, index = 10, ds=ds)
+
+reflexive_idxs = [corpus.index(reflexive_example) for reflexive_example in [example for example in corpus if "self" in example]]
+total = 0
+correct = 0
+for idx in reflexive_idxs:
+    total += 1
+    if test_index(model, index = idx, ds=ds, verbose=False):
+        correct += 1
+    else:
+       test_index(model, index = idx, ds=ds, verbose=True) 
+print(correct/total)
+
 
 # %%
 for verb in transitive_verbs:
