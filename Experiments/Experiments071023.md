@@ -2,6 +2,7 @@
 First, we trained five encoder-decoder transformer models. All these models had a single layer and a single attention head, with a hidden dimension size of 32. There was an embedding layer to project the one-hot encoding of the input sequence to the hidden dimension size, followed by an nn.Transformer layer, followed by a final linear projection to the output vocabulary size. All the models were trained for 150 epochs on the same training dataset. This training dataset consisted of nearly all corpus examples, but with all examples of the form "[Excluded_Female_Name] [Transitive_Verb] herself" excluded, where there were exactly five female names excluded in this manner.
 
 To each of these models, we ran a series of transformer arithmetic experiments. Specifically, we added/subtracted the encoder outputs (including intermediate outputs) for three examples of the following form:
+
 (+) [name1] [verb1] "herself"
 
 (-) [name1] [verb2] [name2]
