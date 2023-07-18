@@ -259,7 +259,7 @@ def train_model(model, ds_train, ds_test, num_epochs, print_every=5, batch_size=
         avg_loss /= len(dl_train)
 
 
-        if epoch % print_every == 0:
+        if epoch+1 % print_every == 0:
             total = 0
             correct = 0
             for batch in dl_test:
@@ -277,19 +277,6 @@ def train_model(model, ds_train, ds_test, num_epochs, print_every=5, batch_size=
             print(f"Epoch {epoch+1} Train Loss {avg_loss:.5f} Test Accuracy {correct/total:.3f}")
     
     return model
-
-# %%
-corpus_train, corpus_test = create_train_corpus(corpus, excluded_females=0, exclude_men=False)
-ds_train, ds_test = TextDataset(corpus_train), TextDataset(corpus_test)
-
-# train_size = int(0.98*len(ds))
-# test_size = len(ds)-train_size
-# ds_train, ds_test = torch.utils.data.random_split(ds, [train_size, test_size])
-
-
-model = AttnOnly_Transformer(vocab_size=len(vocab), n_heads=4, d_model=32, d_head=8, n_layers=3, attn_only=False).to(device)
-model = train_model(model, ds_train, ds_train, num_epochs=75, print_every=1)
-
 # %%
 def test_index(model, ds, index, max_length=10, verbose=True):
     if verbose: print(f"===== TESTING INDEX {index} =====")
@@ -309,6 +296,41 @@ def test_index(model, ds, index, max_length=10, verbose=True):
     
     return chars_from_ids(output) == chars_from_ids(input.flatten()[break_point:])
 
+# %%
+from tqdm import tqdm
+
+results = dict()
+experiments = [1, 2, 4, 6, 8]
+for n in experiments:
+    for i in range(10):
+        print(f"training model {i+1}/10... in experiment {n}")
+        corpus_train, corpus_test = create_train_corpus(corpus, excluded_females=n, exclude_men=False)
+        ds_train, ds_test = TextDataset(corpus_train), TextDataset(corpus_test)
+        model = AttnOnly_Transformer(vocab_size=len(vocab), n_heads=4, d_model=32, d_head=8, n_layers=3, attn_only=False).to(device)
+        model = train_model(model, ds_train, ds_train, num_epochs=100, print_every=1e10)
+
+        test_performance = []
+        for idx in range(len(ds_test)):
+            test_performance.append(test_index(model, ds=ds_test, index=idx, max_length=10, verbose=False))
+        test_performance = sum(test_performance)/len(test_performance)
+        print(f"accuracy on test set: {test_performance}")
+
+        key = f"excluding {n} females, including all males"
+        if key in results.keys():
+            results[key].append(test_performance)
+        else:
+            results[key] = [test_performance]
+    print(f"EXPERIMENT {n} RESULTS: {results[key]}")
+
+# train_size = int(0.98*len(ds))
+# test_size = len(ds)-train_size
+# ds_train, ds_test = torch.utils.data.random_split(ds, [train_size, test_size])
+
+
+
+
+# %%
+
 
 reflexive_idxs = [corpus.index(reflexive_example) for reflexive_example in [example for example in corpus if "self" in example]]
 total = 0
@@ -323,6 +345,33 @@ print(correct/total)
 
 
 # %%
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
+
+x = []
+y = []
+cellText = [["Number of Excluded Names", "Mean", "STD"]]
+for n in experiments:
+    new_points = results[f"excluding {n} females, including all males"]
+    cellText += [[str(n), f"{torch.mean(torch.tensor(new_points)).item():.3f}", f"{torch.std(torch.tensor(new_points)).item():.3f}"]]
+    x += [n for i in range(len(new_points))]
+    y += new_points
+  
+ax = sns.pointplot(x, y, errorbar="sd")
+plt.title('Effect of Removing Female Names on ED_Transformer \n Generalization (\"himself\" examples NOT included)')
+# Set x-axis label
+plt.xlabel('Excluded Female Names (of 15)')
+# Set y-axis label
+plt.ylabel('Accuracy on Excluded Names')
+
+plt.table(cellText=cellText, loc='bottom', bbox = [0, -0.7, 1, 0.5])
+
+plt.show()
+
+
+# %%
+
 for verb in transitive_verbs:
     partial = f"Emma {verb} herself"
     full = [sent for sent in corpus if partial in sent]
