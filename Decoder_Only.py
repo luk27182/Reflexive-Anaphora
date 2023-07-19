@@ -142,10 +142,13 @@ class SelfAttention(nn.Module):
         self.W_V = nn.Parameter(torch.empty((n_heads, d_model, d_head)))
         nn.init.normal_(self.W_V, std=self.init_range)
         self.b_V = nn.Parameter(torch.zeros((n_heads, d_head)))
+
+        self.dropout1 = nn.Dropout(p=0.2)
         
         self.W_O = nn.Parameter(torch.empty((n_heads, d_head, d_model)))
         nn.init.normal_(self.W_O, std=self.init_range)
         self.b_O = nn.Parameter(torch.zeros((d_model)))
+        self.dropout2 = nn.Dropout(p=0.2)
 
     def apply_causal_mask(self, attn_scores):
         mask = torch.triu(torch.ones(attn_scores.size(-2), attn_scores.size(-1), device=attn_scores.device), diagonal=1).bool()
@@ -163,12 +166,17 @@ class SelfAttention(nn.Module):
         attn_scores = self.apply_causal_mask(attn_scores)
 
         pattern = attn_scores.softmax(dim=-1) # [batch, n_head, query_pos, key_pos]
+        if self.training:
+            pattern = self.dropout1(pattern)
 
         v = einsum("batch key_pos d_model, n_heads d_model d_head -> batch key_pos n_heads d_head", normalized_resid_pre, self.W_V) + self.b_V
 
         z = einsum("batch n_heads query_pos key_pos, batch key_pos n_heads d_head -> batch query_pos n_heads d_head", pattern, v)
 
         attn_out = einsum("batch query_pos n_heads d_head, n_heads d_head d_model -> batch query_pos d_model", z, self.W_O) + self.b_O
+
+        if self.training:
+            attn_out = self.dropout2(attn_out)
         
         return attn_out, pattern
 
@@ -180,40 +188,47 @@ class AttnBlock(nn.Module):
         self.ln1 = LayerNorm(d_model=d_model)
         self.attn = SelfAttention(n_heads=n_heads, d_model=d_model, d_head=d_head)
 
-        self.ln1 = LayerNorm(d_model=d_model)
-        self.attn = SelfAttention(n_heads=n_heads, d_model=d_model, d_head=d_head)
-
         if not attn_only:
             self.linear_expand = nn.Linear(d_model, 4*d_model)
             self.linear_contract = nn.Linear(4*d_model, d_model)
             self.ln2 = LayerNorm(d_model=d_model)
+            self.dropout = nn.Dropout(p=0.2)
     
     def forward(self, resid_pre):
         normalized_resid_pre = self.ln1(resid_pre)
 
         attn_out, attn_pattern = self.attn(normalized_resid_pre)
-        resid_mid = attn_out+normalized_resid_pre
+        resid_mid = attn_out+resid_pre
         
         if self.attn_only:
-            return resid_mid
+            return resid_mid, attn_pattern
     
         normalized_resid_mid = self.ln2(resid_mid)
 
-        linear_out = self.linear_contract(self.linear_expand(normalized_resid_mid))
+        linear_out = self.linear_contract(nn.GELU()(self.linear_expand(normalized_resid_mid)))
+        if self.training:
+            linear_out = self.dropout(linear_out)
+        
         resid_post = linear_out+resid_mid
 
-        return resid_mid
+        return resid_post, attn_pattern
 
 
 class AttnOnly_Transformer(nn.Module):
     def __init__(self, vocab_size, n_heads, d_model, d_head, n_layers, attn_only=False, ctx_length=9):
         super().__init__()
+        self.n_layers = n_layers
+        self.n_heads = n_heads
+
+        self.cache = dict()
         self.embedding = nn.Embedding(vocab_size, d_model)
         self.pos_embedding = nn.Embedding(ctx_length, d_model)
+        self.dropout = nn.Dropout(p=0.2)
 
         self.blocks = nn.ModuleList([])
         self.blocks.extend([AttnBlock(n_heads=n_heads, d_model=d_model, d_head=d_head, attn_only=attn_only) for i in range(n_layers)])
 
+        self.final_layer_norm = LayerNorm(d_model=32)
         self.unembedding = nn.Linear(d_model, vocab_size)
 
     def embed(self, tensor):
@@ -222,8 +237,14 @@ class AttnOnly_Transformer(nn.Module):
     def forward(self, seq):
         # seq is of shape BATCH X POS, where entries are integers
         residual_stream = einops.rearrange(self.embed(seq), "s b d -> b s d")
-        for block in self.blocks:
-            residual_stream = block(residual_stream)
+        if model.training:
+            residual_stream = self.dropout(residual_stream)
+        for n, block in enumerate(self.blocks):
+            residual_stream, attn_pattern = block(residual_stream) # attn_pattern is of shape BATCH x n_head x SEQ x SEQ
+            for head in range(attn_pattern.size(1)):
+                self.cache[f"l{n}h{head}_pattern"] = attn_pattern[:, head].detach()
+
+        residual_stream = self.final_layer_norm(residual_stream)
         model_out = self.unembedding(residual_stream) # shape is BATCH X POS X VOCAB
 
         return model_out
@@ -259,7 +280,7 @@ def train_model(model, ds_train, ds_test, num_epochs, print_every=5, batch_size=
         avg_loss /= len(dl_train)
 
 
-        if epoch+1 % print_every == 0:
+        if True: #epoch+1 % print_every == 0:
             total = 0
             correct = 0
             for batch in dl_test:
@@ -279,6 +300,7 @@ def train_model(model, ds_train, ds_test, num_epochs, print_every=5, batch_size=
     return model
 # %%
 def test_index(model, ds, index, max_length=10, verbose=True):
+    model.eval()
     if verbose: print(f"===== TESTING INDEX {index} =====")
     example = ds[index].to(device)
     break_point = example.tolist().index(2)+1
@@ -289,7 +311,7 @@ def test_index(model, ds, index, max_length=10, verbose=True):
 
     input = input.view(-1, 1)
     while len(input) < max_length and input[-1][0] != 3:
-        model_out = model(input)
+        model_out  = model(input)
         _, new_out = model_out[0][-1].topk(1)
         input = torch.cat([input, torch.tensor([new_out]).to(device).view(1, 1)])
     if verbose: print(f"model out: {chars_from_ids(input.flatten()[break_point:])}")
@@ -297,11 +319,41 @@ def test_index(model, ds, index, max_length=10, verbose=True):
     return chars_from_ids(output) == chars_from_ids(input.flatten()[break_point:])
 
 # %%
+corpus_train, corpus_test = create_train_corpus(corpus, excluded_females=5, exclude_men=False)
+ds_train, ds_test = TextDataset(corpus_train), TextDataset(corpus_test)
+model = AttnOnly_Transformer(vocab_size=len(vocab), n_heads=4, d_model=32, d_head=8, n_layers=3, attn_only=False).to(device)
+model = train_model(model, ds_train, ds_test, num_epochs=100, print_every=1)
+# %%
+torch.save(obj=model.state_dict(), f='./Models/Decoder_Only_Transformers/dec_only_100epochs_5fexcluded_SEMIGENERALIZING.pth')
+
+
+# %%
+model = AttnOnly_Transformer(vocab_size=len(vocab), n_heads=4, d_model=32, d_head=8, n_layers=3, attn_only=False).to(device)
+model.load_state_dict(state_dict=torch.load('./Models/Decoder_Only_Transformers/dec_only_100epochs_5fexcluded_SEMIGENERALIZING.pth'))
+
+for index in range(len(ds_test)):
+    if not test_index(model, ds_test, index=index, verbose=False):
+        print(index, chars_from_ids(ds_test[index]))
+
+# %%
+index = 0
+test_index(model, ds_test, index=index)
+for i in range(model.n_layers):
+    for j in range(model.n_heads):
+        plt.imshow(model.cache[f'l{i}h{j}_pattern'][0].to('cpu'), cmap='hot')
+        example = corpus_test[index].split()[:-1]
+        plt.xticks(range(len(example)), example, rotation=90)
+        plt.yticks(range(len(example)), example)
+        plt.title(f'l{i}h{j} pattern')
+        plt.colorbar()
+        plt.show()
+
+# %%
 from tqdm import tqdm
 
 results = dict()
-experiments = [1, 2, 4, 6, 8]
-for n in experiments:
+experiments = [1, 3, 5, 7, 9]
+for n in tqdm(experiments):
     for i in range(10):
         print(f"training model {i+1}/10... in experiment {n}")
         corpus_train, corpus_test = create_train_corpus(corpus, excluded_females=n, exclude_men=False)

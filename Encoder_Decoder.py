@@ -353,25 +353,9 @@ for i in range(1,5):
     create_forced_models(i, verbose=False)
 
 # %%
-base = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32, preserve_encoding_embedding_space=False)
-base.load_state_dict(state_dict=torch.load
-(f='./Models/071223/0_base.pth'))
-
-manipulated = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32, preserve_encoding_embedding_space=False)
-manipulated.load_state_dict(state_dict=torch.load
-(f='./Models/071223/0_manipulated.pth'))
-
 encoderForced = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32, preserve_encoding_embedding_space=False)
 encoderForced.load_state_dict(state_dict=torch.load
-(f='./Models/071223/0_encoderForced.pth'))
-
-decoderForced = ED_Transformer(input_size=len(eng_vocab), output_size=len(parsed_vocab), d_model=32, preserve_encoding_embedding_space=False)
-decoderForced.load_state_dict(state_dict=torch.load
-(f='./Models/071223/0_decoderForced.pth'))
-
-for name in base.state_dict().keys():
-    if not torch.all(encoderForced.state_dict()[name].to(device) == manipulated.state_dict()[name].to(device)).item():
-        print(name)
+(f='./Models/071223_EDForced_Transformers/0_encoderForced.pth'))
 
 
 # %%
@@ -452,6 +436,9 @@ model.load_state_dict(state_dict=torch.load('Models/transformer_1head_32hidden_1
 model = model.to(device)
 
 # %%
+SOS_token = parsed_vocab.index("<SOS>") # 1
+EOS_token = parsed_vocab.index("<EOS>") # 3
+
 def test_example(model, index, max_gen_len=10):
     model.eval()
     src, _ = ds[index]
@@ -620,7 +607,7 @@ import pandas as pd
 import seaborn as sns
 from matplotlib import pyplot as plt
 
-results = torch.load(f='./Experiments/070423_resultsmodel2.pth')
+results = torch.load(f='./Experiments/results/070423_resultsmodel2.pth')
 data_encoder = [list(out[:-1])+["encoder"] for out in results["encoder"]]
 data_decoder = [list(out[:-1])+["decoder"] for out in results["decoder"]]
 data_neither = [list(out[:-1])+["neither"] for out in results["neither"]]
@@ -684,7 +671,7 @@ for i in range(5):
     data.append([f"Encoder Forced {i}", f"{(len(results['encoder'])/31.5):.2f}", f"{(len(results['decoder'])/31.5):.2f}", f"{(len(results['neither'])/31.5):.2f}"])
 for i in range(5):
     results = torch.load(f=f'./Experiments/Results/071223/{i}_decoder_results.pth')
-    data.append([f"Encoder Forced {i}", f"{(len(results['encoder'])/31.5):.2f}", f"{(len(results['decoder'])/31.5):.2f}", f"{(len(results['neither'])/31.5):.2f}"])
+    data.append([f"Decoder Forced {i}", f"{(len(results['encoder'])/31.5):.2f}", f"{(len(results['decoder'])/31.5):.2f}", f"{(len(results['neither'])/31.5):.2f}"])
 
 col_names = ["model_name", "% Encoder Solved", "% Decoder Solved", "% Neither Solved"]
 df = pd.DataFrame(data=data, columns=col_names)
