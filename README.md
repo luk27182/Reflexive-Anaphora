@@ -13,6 +13,11 @@ To confirm we are running experiments comparable to their work, we began be re-r
 The first experiment we ran was letting the training set be all sentences except those of the form "WITHHELD-NAME VERB herself" for all WITHHELD-NAMEs from specific sets of female names. We then tested the accuracy of the model on these withheld sentences. The graph to the left below shows the accuracy on the test set for excluding 1, 5, 10, 11, 12, 13, and 14 female names in this way. For the second experiment, we did the same exact test except we removed all sentences of the form "MALE-NAME VERB himself" from the dataset (both train and test.) Before running the experiment, we hypothesize that:
     * In both experiments, we will see a negative correlation between the number of withheld female names in the training set and the test accuracy on these withheld names
     * We will see generally lower accuracies (and perhaps a sharper decline) in the second experiment. This is because we predict that the model is able to learn that "himself" and "herself" mean basically the same thing, so learning about "himself" helps the model learn about "himself."
+
+<p align="center">
+    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/GRU_discluded.png" alt="Experiment Results">
+    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/GRU_included.png" alt="Experiment Results">
+</p>
 Looking at these graphs, we see that the first of our hypotheses was indeed correct- the more female names we exclude, the harder it is for the model to generalize. The second hypothesis is less obviously true. Excluding the male name examples only decreased test generalization very slightly. This gives some evidence that the GRU model learns a different circuit for dealing with male and female reflexive anaphora, which is surprising.
 
 We note that these graphs are essentially in agreement with past work.
@@ -21,6 +26,10 @@ We note that these graphs are essentially in agreement with past work.
 We continued by running the same experiments as before, but now using a transformer encoder-decoder model rather than the GRU. This extends previous work in a new direction. The encoder consisted of an embedding layer (embedding dimension 32) and a Pytorch Transformer module (2 heads, a single layer, and a linear layer with width 128). The decoder consisted of another embedding layer (embedding dimension 32) along with a final linear layer to project the decoder output to the size of the parsed english vocabulary (in this case, a projection from 32 dimensions to 45 dimensions). The output of the decoder was thus the logits for the next likely word in the parsed output. The initial input to the decoder was always special "$START$" character. For all future inputs to the decoder, we adopted a teacher forcing training method with a ratio of 0.5. We used cross entropy for the loss function, which allowed us to use the logit outputs of the model directly. The optimizer for both the encoder and the decoder was Adam with default settings. For all models trained in this experiment, we trained over the shuffled data for 5 epochs with a batch size of 32. For the results below, we trained each model in this way 20 times to get accurate confidence intervals.
 
 Before running the experiment, we hypothesize that the results will be essentially identical to the previous experiments on the GRU architecture. As we increase the number of excluded female names, the test accuracy will decrease. Excluding male names will have no detectable effect.
+
+<p align="center">
+    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/Transformer_Combined.jpg" alt="Experiment Results">
+</p>
 
 Looking at the results, they are essentially what we predicted. We note that the transformer model was able to generalize much better than the GRU model, especially when the training set is more restricted. Another thing to note is that the transformer encoder-decoder has roughly twice as many parameters as the GRU encoder-decoder (34253 versus 17101).
 
@@ -33,13 +42,48 @@ If the reconstructed sentence corresponds to "[name3] [verb1] [name3]", then it 
 
 If instead the reconstructed sentence corresponds to "[name3] [verb1] [name1]", then it follows that the encoding of "herself" \textit{does} understand that herself=[name1] in the original sentence "[name1] [verb1] herself." Hence, in this case, the model acted as a encoder-solving model.
 
-This type of analogy was investigated by [5] in the case of encoder-decoder RNN and GRU models. To expand the work to encoder-decoder transformers, we had to ensure that we were applying the arithmetic to the encoding at every time-step (i.e., each token). This required going into the internals of the PyTorch transformer architecture, but was otherwise fairly routine.
+This type of analogy was investigated previously in the case of encoder-decoder RNN and GRU models. To expand the work to encoder-decoder transformers, we had to ensure that we were applying the arithmetic to the encoding at every time-step (i.e., each token). This required going into the internals of the PyTorch transformer architecture, but was otherwise fairly routine.
 
 ### Encoder vs Decoder Transformers
 To begin this experiment, we trained five encoder-decoder transformer models. All these models had a single layer and a single attention head, with a hidden dimension size of 32. There was an embedding layer to project the one-hot encoding of the input sequence to the hidden dimension size, followed by an nn.Transformer layer, followed by a final linear projection to the output vocabulary size. All the models were trained for 150 epochs on the same training dataset. This training dataset consisted of nearly all corpus examples, but with all examples of the form "[Exclude Female Name] [Transitive Verb] herself" excluded, where there were exactly five female names excluded in this manner.
 
-
 For all five of these models trained previously, we ran the arithmetic described in 4.2 for all possible [name1], [name2], [name3] in the female names list (15 names) as well as all possible transitive verbs (7 verbs). HOWEVER- we did not include examples when name1 == name3, as in these cases a decoder-solver and an encoder-solver would produce the same arithmetic result. In the histograms below, we show the distributions of how many examples are solved by the encoder/decoder/neither conditional on specific parts of the sentence. The top left chart in the figures below show the distribution conditional on what name1 was in the analogies. Below this is the distribution conditional on name2, and below this the distribution conditional on name3. The top right chart in the figures below show the distribution conditional on what verb1 was in the analogies. Below this is the distribution conditional on verb2.
+
+<p align="center">
+    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/bars1.png">
+</p>
+Remarkably, this first model seemed to solve every example using the decoder. We would hope
+that all models would be this clear cut, but alas.
+
+<p align="center">
+    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/bars2.png">
+</p>
+<p align="center">
+    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/bars3.png">
+</p>
+In the second two models cases, we see that the arithmetic does not work as ideally. Sometimes
+the model seems to be using the encoder to solve reflexive cases, and other times the model seems to
+use the decoder. In these models, it is clear that the decoder is predominantly used. We also see that the
+distributions are quite different when we condition on name1 and name3, but are essentially unchanging
+when we change name2, verb1, and verb2. This makes some sense since the parsed model output is
+presumably one of ”[verb1] [name3] [name3]” or ”[verb1] [name3] [name1]” and these only differ by a
+change in name1 and name3. Hence it would be very strange if the distributions changed depending on
+name2, verb1, or verb2. It is still surprising to me that the name involved changes the distribution, as
+one would hope that the model is learning something algorithmic rather than anything specific to certain
+names
+
+<p align="center">
+    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/bars4.png">
+</p>
+<p align="center">
+    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/bars5.png">
+</p>
+
+These results are essentially the same as the previous example. One interesting difference is that
+these two models preferred to use the decoder to solve the arithmetic examples rather than the encoder.
+Another interesting result here is that in the case of model 4, it seems that name2 also had a large effect
+on what was used to solve the arithmetic. This is surprising. I attribute it to most likely being a quirk of
+the model being used in this way (it was not trained to do arithmetic).
 
 ### Manually Creating Encoder/Decoder Solving Transformers
 
@@ -57,6 +101,12 @@ We now have 5 models which we know use the encoder to solve reflexive cases, and
 
 Below are the results (NOTE: percents are based off of 3150 example analogies. This is 15\*\*3 combinations for name1,name2,name3 minus 15\*\*2 combinations of name1,name2,name3 when name1==name3):
 
+<p align="center">
+    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/forced_table.png">
+</p>
+The results are shockingly clear cut! This supports that our idea of using transformer arithmetic
+to figure out which part of the model was solving the task.
+
 ## Decoder Only Models
 Following the disheartening results from section 4.2 (disheartening from a standpoint of interpretability), we decided to move on to analyzing decoder-only transformer models. which we hoped would be easier to interpret. This is the type of architecture used by models such as ChatGPT.
 
@@ -69,7 +119,17 @@ We implemented an architecture similar to GPT2 (though much smaller) and obtaine
 ####  Investigating Attention Patterns
 First, we looked at the attention patterns for sample inputs.
 
+<p align="center">
+    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/allpatterns.png">
+</p>
+
 We noticed that the attention patterns were looked mostly equivalent on any given layer, so we include only one head of each layer above.
+
+<p align="center">
+    <img height="300" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/l0h0.png">
+    <img height="300" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/l1h0.png">
+    <img height="300" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/l2h2.png">
+</p>
 
 The interpretation of the bright 0.c square above indicates that this component (layer 0 head 0) is paying attention to the word “Alice” when it is analyzing the word “herself”. Hence, it seems possible that this component of the model understands that “herself” corresponds to whatever the word “Alice” means! Most other heads in this layer have similar attention patterns.
 
@@ -80,5 +140,7 @@ The bright 2.c square in the right image above shows that the model is looking a
 #### PCA clustering after layer 0
 
 To provide more evidence for the theory described in 5.1.1 (namely, that layer 0 essentially transforms the vector representation corresponding to the reflexive anaphora into their antecedent), we ran the model over all examples of the form “[name] [verb] herself” for some small selection of names, caching the internal states of the model for each example. We then used PCA to project all the internal states corresponding to the reflexive anaphora after the first layer of computation into a 2D plot.
-
+<p align="center">
+    <img height="300" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/l0h0.png">
+</p>
 The image above shows the results, where the points are colored by the antecedent. Also included in the plot are the PCA projects of the raw embeddings for the three names used (shown in triangles, using the same coloring scheme as before). The results are striking: From the clustering, it’s clear that the first layer of the model truly is converting the anaphora to look identical to their antecedent! 
