@@ -15,8 +15,7 @@ The first experiment we ran was letting the training set be all sentences except
     * We will see generally lower accuracies (and perhaps a sharper decline) in the second experiment. This is because we predict that the model is able to learn that "himself" and "herself" mean basically the same thing, so learning about "himself" helps the model learn about "himself."
 
 <p align="center">
-    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/GRU_discluded.png" alt="Experiment Results">
-    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/GRU_included.png" alt="Experiment Results">
+    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/GRU_combined.png" alt="Experiment Results">
 </p>
 Looking at these graphs, we see that the first of our hypotheses was indeed correct- the more female names we exclude, the harder it is for the model to generalize. The second hypothesis is less obviously true. Excluding the male name examples only decreased test generalization very slightly. This gives some evidence that the GRU model learns a different circuit for dealing with male and female reflexive anaphora, which is surprising.
 
@@ -126,9 +125,7 @@ First, we looked at the attention patterns for sample inputs.
 We noticed that the attention patterns were looked mostly equivalent on any given layer, so we include only one head of each layer above.
 
 <p align="center">
-    <img height="300" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/l0h0.png">
-    <img height="300" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/l1h0.png">
-    <img height="300" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/l2h2.png">
+    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/specific_patterns.png" alt="Experiment Results">
 </p>
 
 The interpretation of the bright 0.c square above indicates that this component (layer 0 head 0) is paying attention to the word “Alice” when it is analyzing the word “herself”. Hence, it seems possible that this component of the model understands that “herself” corresponds to whatever the word “Alice” means! Most other heads in this layer have similar attention patterns.
@@ -141,6 +138,12 @@ The bright 2.c square in the right image above shows that the model is looking a
 
 To provide more evidence for the theory described in 5.1.1 (namely, that layer 0 essentially transforms the vector representation corresponding to the reflexive anaphora into their antecedent), we ran the model over all examples of the form “[name] [verb] herself” for some small selection of names, caching the internal states of the model for each example. We then used PCA to project all the internal states corresponding to the reflexive anaphora after the first layer of computation into a 2D plot.
 <p align="center">
-    <img height="300" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/l0h0.png">
+    <img height="300" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/pca2.png">
 </p>
-The image above shows the results, where the points are colored by the antecedent. Also included in the plot are the PCA projects of the raw embeddings for the three names used (shown in triangles, using the same coloring scheme as before). The results are striking: From the clustering, it’s clear that the first layer of the model truly is converting the anaphora to look identical to their antecedent! 
+We see that the residual stream at the timestep of the reflexive after the first layer results in the points being "mapped to" the noun the correspond to, with a relatively constant vector added on. Thus, we have supported the theory that the first layer is what solves the reflexive anaphora problem.
+
+For reference, we plot the same PCA plot where we instead probe the initial embeddings:
+<p align="center">
+    <img height="300" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/pca1.png">
+</p>
+As one would expect, all the reflexives are overlapping and the other nouns are spread out on the other side of the plot.
