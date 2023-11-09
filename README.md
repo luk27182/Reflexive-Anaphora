@@ -15,7 +15,7 @@ The first experiment we ran was letting the training set be all sentences except
     * We will see generally lower accuracies (and perhaps a sharper decline) in the second experiment. This is because we predict that the model is able to learn that "himself" and "herself" mean basically the same thing, so learning about "himself" helps the model learn about "himself."
 
 <p align="center">
-    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/GRU_combined.png" alt="Experiment Results">
+    <img src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/GRU_combined.png" alt="Experiment Results">
 </p>
 Looking at these graphs, we see that the first of our hypotheses was indeed correct- the more female names we exclude, the harder it is for the model to generalize. The second hypothesis is less obviously true. Excluding the male name examples only decreased test generalization very slightly. This gives some evidence that the GRU model learns a different circuit for dealing with male and female reflexive anaphora, which is surprising.
 
@@ -27,7 +27,7 @@ We continued by running the same experiments as before, but now using a transfor
 Before running the experiment, we hypothesize that the results will be essentially identical to the previous experiments on the GRU architecture. As we increase the number of excluded female names, the test accuracy will decrease. Excluding male names will have no detectable effect.
 
 <p align="center">
-    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/Transformer_Combined.jpg" alt="Experiment Results">
+    <img src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/Transformer_Combined.jpg" alt="Experiment Results">
 </p>
 
 Looking at the results, they are essentially what we predicted. We note that the transformer model was able to generalize much better than the GRU model, especially when the training set is more restricted. Another thing to note is that the transformer encoder-decoder has roughly twice as many parameters as the GRU encoder-decoder (34253 versus 17101).
@@ -49,16 +49,16 @@ To begin this experiment, we trained five encoder-decoder transformer models. Al
 For all five of these models trained previously, we ran the arithmetic described in 4.2 for all possible [name1], [name2], [name3] in the female names list (15 names) as well as all possible transitive verbs (7 verbs). HOWEVER- we did not include examples when name1 == name3, as in these cases a decoder-solver and an encoder-solver would produce the same arithmetic result. In the histograms below, we show the distributions of how many examples are solved by the encoder/decoder/neither conditional on specific parts of the sentence. The top left chart in the figures below show the distribution conditional on what name1 was in the analogies. Below this is the distribution conditional on name2, and below this the distribution conditional on name3. The top right chart in the figures below show the distribution conditional on what verb1 was in the analogies. Below this is the distribution conditional on verb2.
 
 <p align="center">
-    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/bars1.png">
+    <img src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/bars1.png">
 </p>
 Remarkably, this first model seemed to solve every example using the decoder. We would hope
 that all models would be this clear cut, but alas.
 
 <p align="center">
-    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/bars2.png">
+    <img src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/bars2.png">
 </p>
 <p align="center">
-    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/bars3.png">
+    <img src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/bars3.png">
 </p>
 In the second two models cases, we see that the arithmetic does not work as ideally. Sometimes
 the model seems to be using the encoder to solve reflexive cases, and other times the model seems to
@@ -72,10 +72,10 @@ one would hope that the model is learning something algorithmic rather than anyt
 names
 
 <p align="center">
-    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/bars4.png">
+    <img src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/bars4.png">
 </p>
 <p align="center">
-    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/bars5.png">
+    <img src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/bars5.png">
 </p>
 
 These results are essentially the same as the previous example. One interesting difference is that
@@ -101,7 +101,7 @@ We now have 5 models which we know use the encoder to solve reflexive cases, and
 Below are the results (NOTE: percents are based off of 3150 example analogies. This is 15\*\*3 combinations for name1,name2,name3 minus 15\*\*2 combinations of name1,name2,name3 when name1==name3):
 
 <p align="center">
-    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/forced_table.png">
+    <img src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/forced_table.png">
 </p>
 The results are shockingly clear cut! This supports that our idea of using transformer arithmetic
 to figure out which part of the model was solving the task.
@@ -119,13 +119,13 @@ We implemented an architecture similar to GPT2 (though much smaller) and obtaine
 First, we looked at the attention patterns for sample inputs.
 
 <p align="center">
-    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/allpatterns.png">
+    <img src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/allpatterns.png">
 </p>
 
 We noticed that the attention patterns were looked mostly equivalent on any given layer, so we include only one head of each layer above.
 
 <p align="center">
-    <img height="500" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/specific_patterns.png" alt="Experiment Results">
+    <img src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/specific_patterns.png" alt="Experiment Results">
 </p>
 
 The interpretation of the bright 0.c square above indicates that this component (layer 0 head 0) is paying attention to the word “Alice” when it is analyzing the word “herself”. Hence, it seems possible that this component of the model understands that “herself” corresponds to whatever the word “Alice” means! Most other heads in this layer have similar attention patterns.
@@ -138,12 +138,12 @@ The bright 2.c square in the right image above shows that the model is looking a
 
 To provide more evidence for the theory described in 5.1.1 (namely, that layer 0 essentially transforms the vector representation corresponding to the reflexive anaphora into their antecedent), we ran the model over all examples of the form “[name] [verb] herself” for some small selection of names, caching the internal states of the model for each example. We then used PCA to project all the internal states corresponding to the reflexive anaphora after the first layer of computation into a 2D plot.
 <p align="center">
-    <img height="300" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/pca2.png">
+    <img src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/pca2.png">
 </p>
 We see that the residual stream at the timestep of the reflexive after the first layer results in the points being "mapped to" the noun the correspond to, with a relatively constant vector added on. Thus, we have supported the theory that the first layer is what solves the reflexive anaphora problem.
 
 For reference, we plot the same PCA plot where we instead probe the initial embeddings:
 <p align="center">
-    <img height="300" src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/pca1.png">
+    <img src="https://github.com/luk27182/Reflexive-Anaphora/blob/main/README_figures/pca1.png">
 </p>
 As one would expect, all the reflexives are overlapping and the other nouns are spread out on the other side of the plot.
